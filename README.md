@@ -1,10 +1,15 @@
-# wavekat-tts
+<p align="center">
+  <a href="https://github.com/wavekat/wavekat-tts">
+    <img src="https://github.com/wavekat/wavekat-brand/raw/main/assets/banners/wavekat-tts-narrow.svg" alt="WaveKat TTS">
+  </a>
+</p>
 
 [![Crates.io](https://img.shields.io/crates/v/wavekat-tts.svg)](https://crates.io/crates/wavekat-tts)
 [![docs.rs](https://docs.rs/wavekat-tts/badge.svg)](https://docs.rs/wavekat-tts)
 
 Unified text-to-speech for voice pipelines, wrapping multiple TTS engines
-behind common Rust traits. Same pattern as
+behind common Rust traits. 
+Same pattern as
 [wavekat-vad](https://github.com/wavekat/wavekat-vad) and
 [wavekat-turn](https://github.com/wavekat/wavekat-turn).
 
@@ -15,8 +20,8 @@ behind common Rust traits. Same pattern as
 | Backend | Feature flag | Chinese quality | Requires | License |
 |---------|-------------|-----------------|----------|---------|
 | [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) | `kokoro` | Good (4 voices) | ONNX model download | Apache 2.0 |
-| [ElevenLabs](https://elevenlabs.io) | `elevenlabs` | OK | API key | Commercial |
-| [OpenAI TTS](https://platform.openai.com/docs/guides/text-to-speech) | `openai` | Limited | API key | Commercial |
+| [Fish Speech](https://github.com/fishaudio/fish-speech) | `fish-speech` | Excellent | ONNX model download | Apache 2.0 |
+| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | Excellent | ONNX model download | Apache 2.0 |
 
 ## Quick start
 
@@ -62,8 +67,8 @@ Two trait families:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `kokoro` | off | Kokoro 82M local ONNX inference |
-| `elevenlabs` | off | ElevenLabs commercial API |
-| `openai` | off | OpenAI TTS API |
+| `fish-speech` | off | Fish Speech local ONNX inference |
+| `cosyvoice` | off | CosyVoice local ONNX inference |
 
 ## License
 

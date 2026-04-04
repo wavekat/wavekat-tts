@@ -11,12 +11,10 @@ categories = ["multimedia::audio"]
 [features]
 default = []
 
-# Local inference backends
+# Local inference backends (all ONNX-based)
 kokoro = ["dep:ort", "dep:ndarray"]
-
-# API backends
-elevenlabs = ["dep:reqwest", "dep:tokio"]
-openai = ["dep:reqwest", "dep:tokio"]
+fish-speech = ["dep:ort", "dep:ndarray"]
+cosyvoice = ["dep:ort", "dep:ndarray"]
 
 [dependencies]
 wavekat-core = "0.0.3"
@@ -28,10 +26,5 @@ serde_json = "1"
 ort = { version = "2.0.0-rc.12", optional = true }
 ndarray = { version = "0.17", optional = true }
 
-# HTTP API backends (optional)
-reqwest = { version = "0.12", features = ["json"], optional = true }
-tokio = { version = "1", features = ["rt", "macros"], optional = true }
-
 [dev-dependencies]
 hound = "3.5"
-tokio = { version = "1", features = ["full"] }

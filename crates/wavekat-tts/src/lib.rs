@@ -25,8 +25,8 @@
 //! | Feature | Backend | Chinese | Requires |
 //! |---------|---------|---------|----------|
 //! | `kokoro` | Kokoro 82M (ONNX) | Good | ONNX model download |
-//! | `elevenlabs` | ElevenLabs API | OK | API key |
-//! | `openai` | OpenAI TTS | Limited | API key |
+//! | `fish-speech` | Fish Speech (ONNX) | Excellent | ONNX model download |
+//! | `cosyvoice` | CosyVoice (ONNX) | Excellent | ONNX model download |
 //!
 //! # Quick start
 //!
