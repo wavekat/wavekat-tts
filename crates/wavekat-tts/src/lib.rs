@@ -24,7 +24,6 @@
 //!
 //! | Feature | Backend | Chinese | Requires |
 //! |---------|---------|---------|----------|
-//! | `kokoro` | Kokoro 82M (ONNX) | Good | ONNX model download |
 //! | `qwen3-tts` | Qwen3-TTS (ONNX) | Excellent | ONNX model download |
 //! | `cosyvoice` | CosyVoice (ONNX) | Excellent | ONNX model download |
 //!
@@ -32,16 +31,15 @@
 //!
 //! ```toml
 //! [dependencies]
-//! wavekat-tts = { version = "0.0.1", features = ["kokoro"] }
+//! wavekat-tts = { version = "0.0.1", features = ["qwen3-tts"] }
 //! ```
 //!
 //! ```ignore
 //! use wavekat_tts::{TtsBackend, SynthesizeRequest};
-//! use wavekat_tts::backends::kokoro::KokoroTts;
+//! use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
 //!
-//! let tts = KokoroTts::new("path/to/model.onnx")?;
-//! let request = SynthesizeRequest::new("我觉得这个方案")
-//!     .with_voice("zf_xiaobei");
+//! let tts = Qwen3Tts::new("path/to/model.onnx")?;
+//! let request = SynthesizeRequest::new("我觉得这个方案");
 //! let audio = tts.synthesize(&request)?;
 //! // audio: AudioFrame<'static> at 24kHz
 //! ```

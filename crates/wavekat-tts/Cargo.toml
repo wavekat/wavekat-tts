@@ -12,7 +12,6 @@ categories = ["multimedia::audio"]
 default = []
 
 # Local inference backends (all ONNX-based)
-kokoro = ["dep:ort", "dep:ndarray"]
 qwen3-tts = ["dep:ort", "dep:ndarray"]
 cosyvoice = ["dep:ort", "dep:ndarray"]
 

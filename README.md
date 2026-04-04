@@ -19,7 +19,6 @@ Same pattern as
 
 | Backend | Feature flag | Chinese quality | Requires | License |
 |---------|-------------|-----------------|----------|---------|
-| [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) | `kokoro` | Good (4 voices) | ONNX model download | Apache 2.0 |
 | [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | Excellent | ONNX model download | Apache 2.0 |
 | [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | Excellent | ONNX model download | Apache 2.0 |
 
@@ -27,16 +26,15 @@ Same pattern as
 
 ```toml
 [dependencies]
-wavekat-tts = { version = "0.0.1", features = ["kokoro"] }
+wavekat-tts = { version = "0.0.1", features = ["qwen3-tts"] }
 ```
 
 ```rust
 use wavekat_tts::{TtsBackend, SynthesizeRequest};
-use wavekat_tts::backends::kokoro::KokoroTts;
+use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
 
-let tts = KokoroTts::new("path/to/model.onnx")?;
-let request = SynthesizeRequest::new("你好，世界")
-    .with_voice("zf_xiaobei");
+let tts = Qwen3Tts::new("path/to/model.onnx")?;
+let request = SynthesizeRequest::new("你好，世界");
 let audio = tts.synthesize(&request)?;
 
 println!("{}s at {} Hz", audio.duration_secs(), audio.sample_rate());
@@ -66,7 +64,6 @@ Two trait families:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `kokoro` | off | Kokoro 82M local ONNX inference |
 | `qwen3-tts` | off | Qwen3-TTS local ONNX inference |
 | `cosyvoice` | off | CosyVoice local ONNX inference |
 
