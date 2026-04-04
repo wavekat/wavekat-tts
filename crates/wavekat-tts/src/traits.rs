@@ -15,7 +15,7 @@ use crate::types::{SynthesizeRequest, VoiceInfo};
 /// use wavekat_tts::{TtsBackend, SynthesizeRequest};
 ///
 /// let tts = SomeBackend::new()?;
-/// let request = SynthesizeRequest::new("你好，世界");
+/// let request = SynthesizeRequest::new("Hello, world");
 /// let audio = tts.synthesize(&request)?;
 ///
 /// println!("Generated {} samples at {} Hz ({:.2}s)",

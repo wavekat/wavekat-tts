@@ -18,10 +18,10 @@ Same pattern as
 
 ## Backends
 
-| Backend | Feature flag | Requires | License |
-|---------|-------------|----------|---------|
-| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | ONNX model download | Apache 2.0 |
-| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | ONNX model download | Apache 2.0 |
+| Backend | Feature flag | License |
+|---------|-------------|---------|
+| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | Apache 2.0 |
+| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | Apache 2.0 |
 
 ## Quick start
 
@@ -33,7 +33,7 @@ cargo add wavekat-tts --features qwen3-tts
 use wavekat_tts::{TtsBackend, SynthesizeRequest};
 use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
 
-let tts = Qwen3Tts::new("path/to/model.onnx")?;
+let tts = Qwen3Tts::new()?;
 let request = SynthesizeRequest::new("Hello, world");
 let audio = tts.synthesize(&request)?;
 
