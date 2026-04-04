@@ -10,8 +10,8 @@
 #[cfg(feature = "kokoro")]
 pub mod kokoro;
 
-#[cfg(feature = "fish-speech")]
-pub mod fish_speech;
+#[cfg(feature = "qwen3-tts")]
+pub mod qwen3_tts;
 
 #[cfg(feature = "cosyvoice")]
 pub mod cosyvoice;

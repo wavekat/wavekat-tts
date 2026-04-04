@@ -25,7 +25,7 @@
 //! | Feature | Backend | Chinese | Requires |
 //! |---------|---------|---------|----------|
 //! | `kokoro` | Kokoro 82M (ONNX) | Good | ONNX model download |
-//! | `fish-speech` | Fish Speech (ONNX) | Excellent | ONNX model download |
+//! | `qwen3-tts` | Qwen3-TTS (ONNX) | Excellent | ONNX model download |
 //! | `cosyvoice` | CosyVoice (ONNX) | Excellent | ONNX model download |
 //!
 //! # Quick start

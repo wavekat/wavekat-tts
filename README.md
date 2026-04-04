@@ -20,7 +20,7 @@ Same pattern as
 | Backend | Feature flag | Chinese quality | Requires | License |
 |---------|-------------|-----------------|----------|---------|
 | [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) | `kokoro` | Good (4 voices) | ONNX model download | Apache 2.0 |
-| [Fish Speech](https://github.com/fishaudio/fish-speech) | `fish-speech` | Excellent | ONNX model download | Apache 2.0 |
+| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | Excellent | ONNX model download | Apache 2.0 |
 | [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | Excellent | ONNX model download | Apache 2.0 |
 
 ## Quick start
@@ -67,7 +67,7 @@ Two trait families:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `kokoro` | off | Kokoro 82M local ONNX inference |
-| `fish-speech` | off | Fish Speech local ONNX inference |
+| `qwen3-tts` | off | Qwen3-TTS local ONNX inference |
 | `cosyvoice` | off | CosyVoice local ONNX inference |
 
 ## License
