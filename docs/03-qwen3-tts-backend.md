@@ -6,6 +6,23 @@ Implement `Qwen3Tts` as the first TTS backend in wavekat-tts, using ONNX Runtime
 (`ort` crate) to run the Qwen3-TTS-12Hz-0.6B model. The backend implements both
 `TtsBackend` (batch) and `StreamingTtsBackend` (chunked vocoder decode).
 
+## Why 0.6B-12Hz
+
+Qwen3-TTS ships 4 variants (2 sizes × 2 codec rates):
+
+| | 0.6B | 1.7B |
+|---|---|---|
+| **12 Hz** | Qwen3-TTS-12Hz-0.6B | Qwen3-TTS-12Hz-1.7B |
+| **25 Hz** | Qwen3-TTS-25Hz-0.6B | Qwen3-TTS-25Hz-1.7B |
+
+We target **0.6B-12Hz** because:
+
+- **Pre-exported ONNX models exist** — `elbruno/Qwen3-TTS-12Hz-0.6B-Base-ONNX`
+  on HuggingFace. Other variants would require running the export scripts ourselves.
+- **Smaller footprint** — ~3.8 GB total ONNX vs ~7 GB for 1.7B.
+- **Fewer decode steps** — 12 Hz = half the autoregressive steps of 25 Hz for the
+  same audio duration, directly improving latency.
+
 ## Model architecture
 
 Qwen3-TTS is a discrete multi-codebook language model. Inference requires
