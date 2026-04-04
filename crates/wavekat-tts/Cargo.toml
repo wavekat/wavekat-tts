@@ -15,7 +15,6 @@ default = []
 kokoro = ["dep:ort", "dep:ndarray"]
 
 # API backends
-edge-tts = ["dep:reqwest", "dep:tokio", "dep:uuid"]
 elevenlabs = ["dep:reqwest", "dep:tokio"]
 openai = ["dep:reqwest", "dep:tokio"]
 
@@ -32,7 +31,6 @@ ndarray = { version = "0.17", optional = true }
 # HTTP API backends (optional)
 reqwest = { version = "0.12", features = ["json"], optional = true }
 tokio = { version = "1", features = ["rt", "macros"], optional = true }
-uuid = { version = "1", features = ["v4"], optional = true }
 
 [dev-dependencies]
 hound = "3.5"

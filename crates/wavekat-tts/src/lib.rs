@@ -24,7 +24,6 @@
 //!
 //! | Feature | Backend | Chinese | Requires |
 //! |---------|---------|---------|----------|
-//! | `edge-tts` | Microsoft Edge TTS | Excellent | `pip install edge-tts` + `ffmpeg` |
 //! | `kokoro` | Kokoro 82M (ONNX) | Good | ONNX model download |
 //! | `elevenlabs` | ElevenLabs API | OK | API key |
 //! | `openai` | OpenAI TTS | Limited | API key |
@@ -33,16 +32,16 @@
 //!
 //! ```toml
 //! [dependencies]
-//! wavekat-tts = { version = "0.0.1", features = ["edge-tts"] }
+//! wavekat-tts = { version = "0.0.1", features = ["kokoro"] }
 //! ```
 //!
 //! ```ignore
 //! use wavekat_tts::{TtsBackend, SynthesizeRequest};
-//! use wavekat_tts::backends::edge_tts::EdgeTtsCli;
+//! use wavekat_tts::backends::kokoro::KokoroTts;
 //!
-//! let tts = EdgeTtsCli::new();
+//! let tts = KokoroTts::new("path/to/model.onnx")?;
 //! let request = SynthesizeRequest::new("我觉得这个方案")
-//!     .with_voice("zh-CN-YunxiNeural");
+//!     .with_voice("zf_xiaobei");
 //! let audio = tts.synthesize(&request)?;
 //! // audio: AudioFrame<'static> at 24kHz
 //! ```

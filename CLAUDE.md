@@ -10,7 +10,7 @@ from `wavekat-core`.
 
 ```bash
 make check          # clippy + fmt + test (no features)
-make test-edge      # test edge-tts backend
+make test-kokoro    # test kokoro backend
 make test-all       # test all backends
 ```
 

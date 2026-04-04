@@ -1,4 +1,4 @@
-.PHONY: check test test-edge test-all fmt clippy doc
+.PHONY: check test test-kokoro test-all fmt clippy doc
 
 check: fmt clippy test
 
@@ -7,20 +7,16 @@ fmt:
 
 clippy:
 	cargo clippy --all-targets -- -D warnings
-	cargo clippy --all-targets --features edge-tts -- -D warnings
+	cargo clippy --all-targets --features kokoro -- -D warnings
 
 test:
 	cargo test
 
-test-edge:
-	cargo test --features edge-tts
+test-kokoro:
+	cargo test --features kokoro
 
 test-all:
 	cargo test --all-features
 
 doc:
 	cargo doc --all-features --no-deps --open
-
-# Generate turn detection dataset (requires: pip install edge-tts && brew install ffmpeg)
-dataset:
-	cargo run --example batch_generate --features edge-tts

@@ -4,11 +4,8 @@
 /// feature in your `Cargo.toml` to use it:
 ///
 /// ```toml
-/// wavekat-tts = { version = "0.0.1", features = ["edge-tts"] }
+/// wavekat-tts = { version = "0.0.1", features = ["kokoro"] }
 /// ```
-
-#[cfg(feature = "edge-tts")]
-pub mod edge_tts;
 
 #[cfg(feature = "kokoro")]
 pub mod kokoro;
