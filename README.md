@@ -13,20 +13,20 @@ Same pattern as
 [wavekat-vad](https://github.com/wavekat/wavekat-vad) and
 [wavekat-turn](https://github.com/wavekat/wavekat-turn).
 
-> **Warning** Early development. API may change between minor versions.
+> [!WARNING]
+> Early development. API may change between minor versions.
 
 ## Backends
 
-| Backend | Feature flag | Chinese quality | Requires | License |
-|---------|-------------|-----------------|----------|---------|
-| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | Excellent | ONNX model download | Apache 2.0 |
-| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | Excellent | ONNX model download | Apache 2.0 |
+| Backend | Feature flag | Requires | License |
+|---------|-------------|----------|---------|
+| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | ONNX model download | Apache 2.0 |
+| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | ONNX model download | Apache 2.0 |
 
 ## Quick start
 
-```toml
-[dependencies]
-wavekat-tts = { version = "0.0.1", features = ["qwen3-tts"] }
+```sh
+cargo add wavekat-tts --features qwen3-tts
 ```
 
 ```rust
@@ -34,13 +34,13 @@ use wavekat_tts::{TtsBackend, SynthesizeRequest};
 use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
 
 let tts = Qwen3Tts::new("path/to/model.onnx")?;
-let request = SynthesizeRequest::new("你好，世界");
+let request = SynthesizeRequest::new("Hello, world");
 let audio = tts.synthesize(&request)?;
 
 println!("{}s at {} Hz", audio.duration_secs(), audio.sample_rate());
 ```
 
-All backends produce `AudioFrame<'static>` from `wavekat-core` — the same
+All backends produce `AudioFrame<'static>` from [`wavekat-core`](https://github.com/wavekat/wavekat-core) — the same
 type consumed by `wavekat-vad` and `wavekat-turn`.
 
 ## Architecture
