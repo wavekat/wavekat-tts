@@ -55,14 +55,14 @@ generate-zh: ## Generate Chinese sample audio (FP32)
 	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) \
 		--text "让每一家小企业，都拥有大企业的声音。" \
 		--lang chinese \
-		--instruct "Speak slowly in a calm and steady male voice" \
+		--instruct "Speak slowly in a calm and professional female voice" \
 		-o sample_zh_fp32.wav
 
 generate-zh-int4: ## Generate Chinese sample audio (INT4)
 	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) --variant int4 \
 		--text "让每一家小企业，都拥有大企业的声音。" \
 		--lang chinese \
-		--instruct "Speak slowly in a calm and steady male voice" \
+		--instruct "Speak slowly in a calm and professional female voice" \
 		-o sample_zh_int4.wav
 
 clean: ## Remove output directory
