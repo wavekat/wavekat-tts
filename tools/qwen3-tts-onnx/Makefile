@@ -5,12 +5,16 @@ PYTHON ?= .venv/bin/python
 FP32_DIR = $(OUTPUT_DIR)/fp32
 INT4_DIR = $(OUTPUT_DIR)/int4
 
-.PHONY: all export embeddings talker code-predictor vocoder validate quantize clean help
+.PHONY: all venv export embeddings talker code-predictor vocoder validate quantize clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 
-all: export validate quantize ## Export FP32, validate, then quantize INT4
+venv: ## Create virtualenv and install dependencies
+	python3 -m venv .venv
+	.venv/bin/pip install -r requirements.txt
+
+all: venv export validate quantize ## Export FP32, validate, then quantize INT4
 
 export: embeddings talker code-predictor vocoder ## Export all FP32 ONNX models
 
