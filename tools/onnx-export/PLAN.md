@@ -31,9 +31,9 @@ Text ──► [Tokenizer + Embedding Construction] ──► inputs_embeds
 | Component | Param | Value |
 |-----------|-------|-------|
 | **Talker** | hidden_size | 2048 |
-| | num_layers | 24 |
-| | num_attention_heads | 32 |
-| | num_kv_heads | 4 |
+| | num_layers | 28 (actual checkpoint, not config default 24) |
+| | num_attention_heads | 16 |
+| | num_kv_heads | 8 (actual checkpoint, not config default 4) |
 | | head_dim | 128 |
 | | vocab_size | 3072 (2048 codec + 1024 control) |
 | | text_hidden_size | 2048 |
