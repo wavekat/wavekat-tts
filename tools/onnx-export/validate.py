@@ -191,9 +191,9 @@ def validate_talker_decode(model, output_dir):
         )
         past_kv = prefill_out.past_key_values
 
-    # Build stacked KV for ONNX
-    past_keys_np = np.stack([past_kv.key_cache[i].numpy() for i in range(num_layers)])
-    past_values_np = np.stack([past_kv.value_cache[i].numpy() for i in range(num_layers)])
+    # Build stacked KV for ONNX (new Cache API: cache[i] -> (key, value))
+    past_keys_np = np.stack([past_kv[i][0].numpy() for i in range(num_layers)])
+    past_values_np = np.stack([past_kv[i][1].numpy() for i in range(num_layers)])
 
     # Single decode step
     decode_embeds = torch.randn(1, 1, hidden_size)
@@ -296,23 +296,36 @@ def validate_code_predictor(model, output_dir):
 # ---------------------------------------------------------------------------
 
 def validate_vocoder(model, output_dir):
-    """Compare vocoder: PyTorch vs ONNX."""
+    """Compare vocoder: PyTorch vs ONNX.
+
+    ONNX vocoder is exported at fixed T (300 for main, 50 for small) due to
+    the internal transformer baking sequence length during JIT trace.
+    We test with vocoder_small.onnx (T=50) for faster validation.
+    """
     print("\n=== Stage 5: Vocoder Validation ===")
 
     speech_tokenizer = model.speech_tokenizer
     decoder = speech_tokenizer.model.decoder
     num_q = decoder.config.num_quantizers
 
+    # Use T=50 to match vocoder_small.onnx; fallback to vocoder.onnx (T=300)
+    onnx_small = os.path.join(output_dir, "vocoder_small.onnx")
+    onnx_main = os.path.join(output_dir, "vocoder.onnx")
+    if os.path.exists(onnx_small):
+        onnx_path = onnx_small
+        T = 50
+    elif os.path.exists(onnx_main):
+        onnx_path = onnx_main
+        T = 300
+    else:
+        print("  SKIP: no vocoder ONNX found")
+        return True
+
     torch.manual_seed(42)
-    codes = torch.randint(0, 2048, (1, num_q, 5), dtype=torch.int64)
+    codes = torch.randint(0, 2048, (1, num_q, T), dtype=torch.int64)
 
     with torch.no_grad():
-        pt_wav = decoder(codes).numpy()
-
-    onnx_path = os.path.join(output_dir, "vocoder.onnx")
-    if not os.path.exists(onnx_path):
-        print("  SKIP: vocoder.onnx not found")
-        return True
+        pt_wav = decoder(codes).cpu().numpy()
 
     sess = ort.InferenceSession(onnx_path)
     ort_out = sess.run(None, {"codes": codes.numpy()})
@@ -326,6 +339,7 @@ def validate_vocoder(model, output_dir):
     else:
         snr = float("inf")
 
+    print(f"  Using {os.path.basename(onnx_path)} (T={T})")
     print(f"  Waveform max_err={max_err:.6e}, SNR={snr:.1f} dB")
     print(f"  PT shape={pt_wav.shape}, ONNX shape={ort_wav.shape}")
     ok = max_err < 1e-2
@@ -346,42 +360,49 @@ def validate_end_to_end(model, output_dir):
     talker_cfg = model.config.talker_config
     cp_cfg = talker_cfg.code_predictor_config
 
-    # Load ONNX sessions
-    onnx_dir = output_dir
+    # Load ONNX sessions (vocoder not needed — use PyTorch decoder for audio)
     required_files = ["talker_prefill.onnx", "talker_decode.onnx",
-                      "code_predictor.onnx", "vocoder.onnx"]
+                      "code_predictor.onnx"]
     for f in required_files:
-        if not os.path.exists(os.path.join(onnx_dir, f)):
+        if not os.path.exists(os.path.join(output_dir, f)):
             print(f"  SKIP: {f} not found")
             return True
 
-    prefill_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_prefill.onnx"))
-    decode_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_decode.onnx"))
-    cp_sess = ort.InferenceSession(os.path.join(onnx_dir, "code_predictor.onnx"))
-    vocoder_sess = ort.InferenceSession(os.path.join(onnx_dir, "vocoder.onnx"))
+    prefill_sess = ort.InferenceSession(os.path.join(output_dir, "talker_prefill.onnx"))
+    decode_sess = ort.InferenceSession(os.path.join(output_dir, "talker_decode.onnx"))
+    cp_sess = ort.InferenceSession(os.path.join(output_dir, "code_predictor.onnx"))
 
     # ---- Run PyTorch inference ----
-    test_text = "Hello, this is a test."
+    test_text = ("The sun rose slowly over the mountains, casting long golden shadows "
+                 "across the valley below. Birds began to sing in the tall pine trees, "
+                 "and a gentle breeze carried the scent of wildflowers through the crisp morning air.")
     language = "english"
-    speaker = list(talker_cfg.spk_id.keys())[0]  # first available speaker
+    # Use first preset speaker if available, else None (VoiceDesign model)
+    if talker_cfg.spk_id:
+        speaker = list(talker_cfg.spk_id.keys())[0]
+    else:
+        speaker = None
     print(f"  Text: '{test_text}', language={language}, speaker={speaker}")
 
     tokenizer = AutoTokenizer.from_pretrained(
         os.path.join(output_dir, "tokenizer")
     )
 
-    # Format text as chat template
+    # Format text as chat template (matches official format)
     chat_text = f"<|im_start|>assistant\n{test_text}<|im_end|>\n<|im_start|>assistant\n"
     input_ids = tokenizer.encode(chat_text, add_special_tokens=False)
     input_ids_tensor = torch.tensor([input_ids], dtype=torch.int64)
 
+    max_frames = 300
+
     with torch.no_grad():
-        # Greedy decode: top_k=1 means argmax
+        # Greedy decode with non_streaming_mode=True to match ONNX side
         pt_codes, pt_hidden = model.generate(
             input_ids=[input_ids_tensor],
             languages=[language],
-            speakers=[speaker],
-            max_new_tokens=20,  # short for validation
+            speakers=[speaker],  # None for VoiceDesign, speaker name for preset
+            non_streaming_mode=True,
+            max_new_tokens=max_frames,
             do_sample=False,
             top_k=1,
             top_p=1.0,
@@ -400,7 +421,8 @@ def validate_end_to_end(model, output_dir):
         model, config, emb,
         input_ids, language, speaker,
         prefill_sess, decode_sess, cp_sess,
-        max_steps=20,
+        max_steps=max_frames,
+        repetition_penalty=1.0,
     )
     print(f"  ONNX generated {len(onnx_codes)} frames")
 
@@ -414,42 +436,89 @@ def validate_end_to_end(model, output_dir):
     pt_codes_trimmed = pt_codes_arr[:min_len]
 
     code_match = np.array_equal(onnx_codes_arr, pt_codes_trimmed)
+    len_match = len(onnx_codes) == pt_codes_arr.shape[0]
+
+    # Find first divergence frame
+    first_diff_frame = min_len
+    for i in range(min_len):
+        if not np.array_equal(onnx_codes_arr[i], pt_codes_trimmed[i]):
+            first_diff_frame = i
+            break
+
     if not code_match:
         diffs = np.sum(onnx_codes_arr != pt_codes_trimmed)
         total = onnx_codes_arr.size
-        print(f"  Code mismatch: {diffs}/{total} elements differ")
-        # Show first difference
-        for i in range(min_len):
-            if not np.array_equal(onnx_codes_arr[i], pt_codes_trimmed[i]):
-                print(f"    First diff at frame {i}: ONNX={onnx_codes_arr[i]}, PT={pt_codes_trimmed[i]}")
-                break
+        print(f"  Codes match for first {first_diff_frame}/{min_len} frames, "
+              f"then {diffs}/{total} elements differ")
+        print(f"  (float32 accumulation causes divergence in autoregressive decode)")
     else:
-        print(f"  Codes match perfectly ({min_len} frames)")
+        print(f"  Codes match perfectly ({min_len} frames, "
+              f"len_match={'yes' if len_match else 'no (%d vs %d)' % (len(onnx_codes), pt_codes_arr.shape[0])})")
 
-    # Decode both to audio via vocoder if codes exist
+    # Decode both to audio via PyTorch vocoder (avoids ONNX fixed-T constraint)
+    decoder = model.speech_tokenizer.model.decoder
+    wav_dir = os.path.join(output_dir, "validation")
+    os.makedirs(wav_dir, exist_ok=True)
     if min_len > 0:
-        num_groups = talker_cfg.num_code_groups
-        # Vocoder expects (1, num_quantizers, T) where num_quantizers = num_groups
-        pt_vocoder_input = pt_codes_trimmed.T[np.newaxis, :, :]  # (1, groups, T)
-        onnx_vocoder_input = onnx_codes_arr.T[np.newaxis, :, :]
+        pt_codes_t = torch.tensor(
+            pt_codes_trimmed.T[np.newaxis, :, :], dtype=torch.int64
+        )
+        onnx_codes_t = torch.tensor(
+            onnx_codes_arr.T[np.newaxis, :, :], dtype=torch.int64
+        )
 
-        pt_wav = vocoder_sess.run(None, {"codes": pt_vocoder_input.astype(np.int64)})[0]
-        onnx_wav = vocoder_sess.run(None, {"codes": onnx_vocoder_input.astype(np.int64)})[0]
+        with torch.no_grad():
+            pt_wav = decoder(pt_codes_t).cpu().numpy().flatten()
+            onnx_wav = decoder(onnx_codes_t).cpu().numpy().flatten()
 
-        # Save WAV files
-        wav_dir = os.path.join(output_dir, "validation")
-        os.makedirs(wav_dir, exist_ok=True)
-        sf.write(os.path.join(wav_dir, "pytorch.wav"), pt_wav.flatten(), 24000)
-        sf.write(os.path.join(wav_dir, "onnx.wav"), onnx_wav.flatten(), 24000)
-        print(f"  Saved audio to {wav_dir}/")
+        sf.write(os.path.join(wav_dir, "pytorch_e2e.wav"), pt_wav, 24000)
+        sf.write(os.path.join(wav_dir, "onnx_e2e.wav"), onnx_wav, 24000)
+        print(f"  Saved audio to {wav_dir}/ ({len(pt_wav)/24000:.1f}s)")
 
         if code_match:
-            # Audio should be identical since we used the same vocoder ONNX
             wav_err = np.max(np.abs(pt_wav - onnx_wav))
             print(f"  Audio max_err={wav_err:.6e} (same codes, same vocoder)")
+        else:
+            signal_power = np.mean(pt_wav ** 2)
+            noise_power = np.mean((pt_wav - onnx_wav) ** 2)
+            snr = 10 * np.log10(signal_power / max(noise_power, 1e-30))
+            print(f"  Audio SNR={snr:.1f} dB (different codes)")
 
-    ok = code_match
+    # With rep_penalty=1.0 and greedy decode, codes should match exactly
+    # (or differ by at most 1 frame at EOS boundary).
+    len_diff = abs(len(onnx_codes) - pt_codes_arr.shape[0])
+    ok = code_match and len_diff <= 1
+    if not len_match and code_match:
+        print(f"  Length diff={len_diff} (EOS boundary sensitivity)")
     print(f"  {'PASS' if ok else 'FAIL'}")
+
+    # Generate a clean listening sample with the model's native sampling config
+    # (do_sample=True, temp=0.9, rep_penalty=1.05 — stops cleanly at EOS)
+    print("\n  Generating clean audio sample (native sampling config)...")
+    with torch.no_grad():
+        sample_codes, _ = model.generate(
+            input_ids=[input_ids_tensor],
+            languages=[language],
+            speakers=[speaker],
+            non_streaming_mode=True,
+            max_new_tokens=max_frames,
+            do_sample=True,
+            top_k=50,
+            top_p=1.0,
+            temperature=0.9,
+            subtalker_dosample=True,
+            subtalker_top_k=50,
+            subtalker_top_p=1.0,
+            subtalker_temperature=0.9,
+            repetition_penalty=1.05,
+        )
+    sample_arr = sample_codes[0].cpu().numpy()
+    sample_t = torch.tensor(sample_arr.T[np.newaxis, :, :], dtype=torch.int64)
+    with torch.no_grad():
+        sample_wav = decoder(sample_t).cpu().numpy().flatten()
+    sf.write(os.path.join(wav_dir, "sample.wav"), sample_wav, 24000)
+    print(f"  Saved sample.wav ({len(sample_wav)/24000:.1f}s, {sample_arr.shape[0]} frames)")
+
     return ok
 
 
@@ -458,6 +527,7 @@ def _onnx_greedy_decode(
     input_ids, language, speaker,
     prefill_sess, decode_sess, cp_sess,
     max_steps=20,
+    repetition_penalty=1.0,
 ):
     """Run ONNX-based greedy decode, replicating the official inference flow."""
     talker_cfg = model.config.talker_config
@@ -503,14 +573,13 @@ def _onnx_greedy_decode(
             talker_cfg.codec_think_eos_id,
         ]
 
-    # Speaker embed
-    spk_id_tokens = talker_cfg.spk_id[speaker.lower()]
-    speaker_embed = codec_emb[spk_id_tokens]  # (num_spk_tokens, hidden) or single token
-    if len(speaker_embed.shape) == 1:
-        speaker_embed = speaker_embed.reshape(1, -1)
-
-    # Codec embeddings for prefix
-    codec_prefix_embed = codec_emb[codec_prefix_ids]  # (N, hidden)
+    # Speaker embed (if available)
+    speaker_embed = None
+    if speaker is not None and speaker != "":
+        spk_id_tokens = talker_cfg.spk_id[speaker.lower()]
+        speaker_embed = codec_emb[spk_id_tokens]  # (num_spk_tokens, hidden) or single
+        if len(speaker_embed.shape) == 1:
+            speaker_embed = speaker_embed.reshape(1, -1)
 
     # tts_pad, tts_bos, tts_eos embeddings
     tts_pad_embed = text_proj([config["tts_pad_token_id"]])[0]  # (hidden,)
@@ -520,20 +589,21 @@ def _onnx_greedy_decode(
     codec_pad_embed = codec_emb[talker_cfg.codec_pad_id]
     codec_bos_embed = codec_emb[talker_cfg.codec_bos_id]
 
-    # Build the prefill sequence:
-    # [role(3)] [tts_pad + codec_prefix] [tts_pad + speaker] [tts_bos + codec_pad] [text[3] + codec_bos]
-    # Then for non-streaming: [text[4:-5] + codec_pad each] [tts_eos + codec_pad] [tts_pad + codec_bos]
+    # Build the prefill sequence (non-streaming mode):
+    # [role(3)] [tts_pad+codec_prefix] [tts_pad+speaker?] [tts_bos+codec_pad]
+    # [text_proj(text_tokens)+codec_pad ...] [tts_eos+codec_pad] [tts_pad+codec_bos]
     embeds_list = []
 
-    # Role: text projection only
+    # Role: text projection only (no codec embedding)
     embeds_list.append(role_embed)  # (3, hidden)
 
     # Codec prefix: tts_pad_embed + codec_embed for each
     for cid in codec_prefix_ids:
         embeds_list.append((tts_pad_embed + codec_emb[cid]).reshape(1, -1))
 
-    # Speaker
-    embeds_list.append((tts_pad_embed + speaker_embed.sum(axis=0)).reshape(1, -1))
+    # Speaker (only if preset speaker available)
+    if speaker_embed is not None:
+        embeds_list.append((tts_pad_embed + speaker_embed.sum(axis=0)).reshape(1, -1))
 
     # Transition: tts_bos + codec_pad
     embeds_list.append((tts_bos_embed + codec_pad_embed).reshape(1, -1))
@@ -578,14 +648,36 @@ def _onnx_greedy_decode(
     all_codes = []
     current_pos = T
     codec_eos = talker_cfg.codec_eos_token_id
+    vocab_size = talker_cfg.vocab_size
+
+    # Suppress control tokens (same as official model: suppress range
+    # [vocab_size-1024, vocab_size) except codec_eos)
+    suppress_mask = np.zeros(vocab_size, dtype=bool)
+    suppress_mask[vocab_size - 1024:vocab_size] = True
+    suppress_mask[codec_eos] = False
+
+    generated_tokens = []  # track group0 tokens for repetition penalty
 
     for step in range(max_steps):
-        # Greedy: argmax on last position logits
-        last_logits = logits[0, -1, :]  # (vocab,)
+        # Greedy: argmax on last position logits (with token suppression)
+        last_logits = logits[0, -1, :].copy()  # (vocab,)
+        last_logits[suppress_mask] = -np.inf
+        # Enforce min_new_tokens=2 (match official model)
+        if step < 2:
+            last_logits[codec_eos] = -np.inf
+        # Repetition penalty (same as HuggingFace RepetitionPenaltyLogitsProcessor)
+        if repetition_penalty != 1.0 and generated_tokens:
+            seen = np.array(generated_tokens)
+            scores = last_logits[seen]
+            scores = np.where(scores > 0, scores / repetition_penalty,
+                              scores * repetition_penalty)
+            last_logits[seen] = scores
         group0_token = int(np.argmax(last_logits))
 
         if group0_token == codec_eos:
             break
+
+        generated_tokens.append(group0_token)
 
         # Run code predictor for groups 1-15
         frame_codes = [group0_token]
