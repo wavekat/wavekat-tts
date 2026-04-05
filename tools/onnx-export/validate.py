@@ -296,53 +296,45 @@ def validate_code_predictor(model, output_dir):
 # ---------------------------------------------------------------------------
 
 def validate_vocoder(model, output_dir):
-    """Compare vocoder: PyTorch vs ONNX.
-
-    ONNX vocoder is exported at fixed T (300 for main, 50 for small) due to
-    the internal transformer baking sequence length during JIT trace.
-    We test with vocoder_small.onnx (T=50) for faster validation.
-    """
+    """Compare vocoder: PyTorch vs ONNX at multiple sequence lengths."""
     print("\n=== Stage 5: Vocoder Validation ===")
 
     speech_tokenizer = model.speech_tokenizer
     decoder = speech_tokenizer.model.decoder
     num_q = decoder.config.num_quantizers
 
-    # Use T=50 to match vocoder_small.onnx; fallback to vocoder.onnx (T=300)
-    onnx_small = os.path.join(output_dir, "vocoder_small.onnx")
-    onnx_main = os.path.join(output_dir, "vocoder.onnx")
-    if os.path.exists(onnx_small):
-        onnx_path = onnx_small
-        T = 50
-    elif os.path.exists(onnx_main):
-        onnx_path = onnx_main
-        T = 300
-    else:
-        print("  SKIP: no vocoder ONNX found")
+    onnx_path = os.path.join(output_dir, "vocoder.onnx")
+    if not os.path.exists(onnx_path):
+        print("  SKIP: vocoder.onnx not found")
         return True
 
-    torch.manual_seed(42)
-    codes = torch.randint(0, 2048, (1, num_q, T), dtype=torch.int64)
-
-    with torch.no_grad():
-        pt_wav = decoder(codes).cpu().numpy()
-
     sess = ort.InferenceSession(onnx_path)
-    ort_out = sess.run(None, {"codes": codes.numpy()})
-    ort_wav = ort_out[0]
+    ok = True
 
-    max_err = np.max(np.abs(pt_wav - ort_wav))
-    if np.max(np.abs(pt_wav)) > 0:
-        signal_power = np.mean(pt_wav ** 2)
-        noise_power = np.mean((pt_wav - ort_wav) ** 2)
-        snr = 10 * np.log10(signal_power / max(noise_power, 1e-30))
-    else:
-        snr = float("inf")
+    # Test multiple T values to verify dynamic sequence length works
+    for T in [50, 150, 299]:
+        torch.manual_seed(42 + T)
+        codes = torch.randint(0, 2048, (1, num_q, T), dtype=torch.int64)
 
-    print(f"  Using {os.path.basename(onnx_path)} (T={T})")
-    print(f"  Waveform max_err={max_err:.6e}, SNR={snr:.1f} dB")
-    print(f"  PT shape={pt_wav.shape}, ONNX shape={ort_wav.shape}")
-    ok = max_err < 1e-2
+        with torch.no_grad():
+            pt_wav = decoder(codes).cpu().numpy()
+
+        ort_out = sess.run(None, {"codes": codes.numpy()})
+        ort_wav = ort_out[0]
+
+        max_err = np.max(np.abs(pt_wav - ort_wav))
+        if np.max(np.abs(pt_wav)) > 0:
+            signal_power = np.mean(pt_wav ** 2)
+            noise_power = np.mean((pt_wav - ort_wav) ** 2)
+            snr = 10 * np.log10(signal_power / max(noise_power, 1e-30))
+        else:
+            snr = float("inf")
+
+        t_ok = max_err < 1e-2
+        print(f"  T={T}: max_err={max_err:.6e}, SNR={snr:.1f} dB, "
+              f"shape={ort_wav.shape} {'PASS' if t_ok else 'FAIL'}")
+        ok = ok and t_ok
+
     print(f"  {'PASS' if ok else 'FAIL'}")
     return ok
 
@@ -360,9 +352,9 @@ def validate_end_to_end(model, output_dir):
     talker_cfg = model.config.talker_config
     cp_cfg = talker_cfg.code_predictor_config
 
-    # Load ONNX sessions (vocoder not needed — use PyTorch decoder for audio)
+    # Load all ONNX sessions (including vocoder for full ONNX-only audio)
     required_files = ["talker_prefill.onnx", "talker_decode.onnx",
-                      "code_predictor.onnx"]
+                      "code_predictor.onnx", "vocoder.onnx"]
     for f in required_files:
         if not os.path.exists(os.path.join(output_dir, f)):
             print(f"  SKIP: {f} not found")
@@ -371,6 +363,7 @@ def validate_end_to_end(model, output_dir):
     prefill_sess = ort.InferenceSession(os.path.join(output_dir, "talker_prefill.onnx"))
     decode_sess = ort.InferenceSession(os.path.join(output_dir, "talker_decode.onnx"))
     cp_sess = ort.InferenceSession(os.path.join(output_dir, "code_predictor.onnx"))
+    vocoder_sess = ort.InferenceSession(os.path.join(output_dir, "vocoder.onnx"))
 
     # ---- Run PyTorch inference ----
     test_text = ("The sun rose slowly over the mountains, casting long golden shadows "
@@ -455,21 +448,15 @@ def validate_end_to_end(model, output_dir):
         print(f"  Codes match perfectly ({min_len} frames, "
               f"len_match={'yes' if len_match else 'no (%d vs %d)' % (len(onnx_codes), pt_codes_arr.shape[0])})")
 
-    # Decode both to audio via PyTorch vocoder (avoids ONNX fixed-T constraint)
-    decoder = model.speech_tokenizer.model.decoder
+    # Decode to audio — use ONNX vocoder (dynamic T) for full ONNX-only validation
     wav_dir = os.path.join(output_dir, "validation")
     os.makedirs(wav_dir, exist_ok=True)
     if min_len > 0:
-        pt_codes_t = torch.tensor(
-            pt_codes_trimmed.T[np.newaxis, :, :], dtype=torch.int64
-        )
-        onnx_codes_t = torch.tensor(
-            onnx_codes_arr.T[np.newaxis, :, :], dtype=torch.int64
-        )
+        pt_vocoder_input = pt_codes_trimmed.T[np.newaxis, :, :].astype(np.int64)
+        onnx_vocoder_input = onnx_codes_arr.T[np.newaxis, :, :].astype(np.int64)
 
-        with torch.no_grad():
-            pt_wav = decoder(pt_codes_t).cpu().numpy().flatten()
-            onnx_wav = decoder(onnx_codes_t).cpu().numpy().flatten()
+        pt_wav = vocoder_sess.run(None, {"codes": pt_vocoder_input})[0].flatten()
+        onnx_wav = vocoder_sess.run(None, {"codes": onnx_vocoder_input})[0].flatten()
 
         sf.write(os.path.join(wav_dir, "pytorch_e2e.wav"), pt_wav, 24000)
         sf.write(os.path.join(wav_dir, "onnx_e2e.wav"), onnx_wav, 24000)
@@ -477,7 +464,7 @@ def validate_end_to_end(model, output_dir):
 
         if code_match:
             wav_err = np.max(np.abs(pt_wav - onnx_wav))
-            print(f"  Audio max_err={wav_err:.6e} (same codes, same vocoder)")
+            print(f"  Audio max_err={wav_err:.6e} (same codes → identical audio)")
         else:
             signal_power = np.mean(pt_wav ** 2)
             noise_power = np.mean((pt_wav - onnx_wav) ** 2)
@@ -513,9 +500,9 @@ def validate_end_to_end(model, output_dir):
             repetition_penalty=1.05,
         )
     sample_arr = sample_codes[0].cpu().numpy()
-    sample_t = torch.tensor(sample_arr.T[np.newaxis, :, :], dtype=torch.int64)
-    with torch.no_grad():
-        sample_wav = decoder(sample_t).cpu().numpy().flatten()
+    # Use ONNX vocoder for the sample too — full ONNX pipeline
+    sample_input = sample_arr.T[np.newaxis, :, :].astype(np.int64)
+    sample_wav = vocoder_sess.run(None, {"codes": sample_input})[0].flatten()
     sf.write(os.path.join(wav_dir, "sample.wav"), sample_wav, 24000)
     print(f"  Saved sample.wav ({len(sample_wav)/24000:.1f}s, {sample_arr.shape[0]} frames)")
 

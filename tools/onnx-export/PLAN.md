@@ -222,6 +222,13 @@ weight = all_weights[generation_steps[0]]
 logits = F.linear(hidden_states, weight)
 ```
 
+### Vocoder Dynamic Sequence Length
+
+The legacy JIT-trace ONNX exporter bakes intermediate tensor shapes as constants
+(torch.arange, attention reshapes, conv slicing, etc.), breaking dynamic T support.
+The vocoder export uses the dynamo-based exporter (`torch.onnx.export(dynamo=True)`)
+which performs symbolic tracing and correctly handles dynamic shapes throughout.
+
 ### Vocoder Codebook Precomputation
 
 `EuclideanCodebook.decode()` divides `embedding_sum / cluster_usage` at runtime.
@@ -281,9 +288,9 @@ Args: --model-id, --output-dir
 3. Precompute EuclideanCodebook embeddings (replace runtime division)
 4. Patch pre_transformer to use_cache=False
 5. Create VocoderWrapper
-6. Export with dummy codes input, opset 17
+6. Export with dynamo=True for dynamic T support
 7. Consolidate external data
-8. Quick validation: compare PyTorch vs ONNX output on random codes
+8. Validate at multiple T values (50, 200, 299) to confirm dynamic shapes
 ```
 
 ### `validate.py`
