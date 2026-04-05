@@ -9,7 +9,14 @@ use wavekat_core::AudioFrame;
 use crate::TtsError;
 
 use super::sampler::{self, SamplerConfig};
-use super::tokenizer::{self, PrefillPosition, TTS_PAD};
+use super::tokenizer::{self, ASSISTANT, IM_START, NEWLINE, TTS_BOS, TTS_EOS, TTS_PAD};
+
+// Codec control token IDs
+const CODEC_PAD: i64 = 2148;
+const CODEC_BOS: i64 = 2149;
+const CODEC_THINK: i64 = 2154;
+const CODEC_THINK_BOS: i64 = 2156;
+const CODEC_THINK_EOS: i64 = 2157;
 
 /// Talker output: (logits, hidden_state, kv_keys, kv_values).
 type TalkerOutput = (Vec<f32>, Array3<f32>, Array5<f32>, Array5<f32>);
@@ -29,7 +36,7 @@ const MAX_NEW_TOKENS: usize = 2048;
 const TALKER_SAMPLER: SamplerConfig = SamplerConfig {
     temperature: 0.7,
     top_p: 0.8,
-    repetition_penalty: 1.0,
+    repetition_penalty: 1.05,
 };
 
 const CP_SAMPLER: SamplerConfig = SamplerConfig {
@@ -126,10 +133,8 @@ impl Model {
         let lang_id = tokenizer::language_id(language)
             .ok_or_else(|| TtsError::UnsupportedLanguage(language.to_string()))?;
 
-        let prefill_seq = tokenizer::build_prefill_sequence(text_tokens, lang_id);
-        let prefill_len = prefill_seq.len();
-
-        let prefill_embeds = self.build_prefill_embeds(&prefill_seq)?;
+        let (prefill_embeds, trailing) = self.build_prefill_embeds(text_tokens, lang_id)?;
+        let prefill_len = prefill_embeds.shape()[1];
 
         // Run talker prefill
         let (logits, hidden_states, mut past_keys, mut past_values) =
@@ -166,13 +171,17 @@ impl Model {
             self.run_code_predictor(&current_hidden, &mut codes)?;
             all_codes.push(codes);
 
-            // Build next talker input: sum of all 16 group embeddings + tts_pad
+            // Build next talker input: sum of all 16 group embeddings + trailing text
             let mut next_embed = self.talker_codec_embedding.row(group0 as usize).to_owned();
             for g in 0..NUM_CP_GROUPS {
                 let cp_embed = self.cp_codec_embeddings[g].row(codes[g + 1] as usize);
                 next_embed += &cp_embed;
             }
-            next_embed += &self.tts_pad_embed;
+            if step < trailing.len() {
+                next_embed += &trailing[step];
+            } else {
+                next_embed += &self.tts_pad_embed;
+            }
 
             let next_embed = next_embed
                 .into_shape_with_order((1, 1, HIDDEN_DIM))
@@ -198,28 +207,97 @@ impl Model {
         self.run_vocoder(&all_codes)
     }
 
-    /// Build prefill input embeddings from the token sequence.
-    fn build_prefill_embeds(&self, sequence: &[PrefillPosition]) -> Result<Array3<f32>, TtsError> {
-        let seq_len = sequence.len();
+    /// Project a text token through the embedding table + SiLU MLP.
+    fn text_project_token(&self, token: u32) -> Array1<f32> {
+        let raw = self.text_embedding.row(token as usize).to_owned();
+        text_project(
+            &raw,
+            &self.text_proj_fc1_weight,
+            &self.text_proj_fc1_bias,
+            &self.text_proj_fc2_weight,
+            &self.text_proj_fc2_bias,
+        )
+    }
+
+    /// Build prefill embeddings and trailing text hidden states.
+    ///
+    /// Prefill layout (matching the C# reference):
+    /// ```text
+    /// [im_start, assistant, \n]         — role prefix (text proj only, no codec)
+    /// [think, think_bos, lang, think_eos, speaker(=pad)] — tts_pad_embed + codec_embed
+    /// [tts_bos_embed + codec_embed(pad)]  — transition marker
+    /// [text_proj(first_text) + codec_embed(bos)] — first text token enters here
+    /// ```
+    ///
+    /// Trailing text hidden: `[text_proj(tok) for tok in text[1:]] + [text_proj(TTS_EOS)]`
+    /// These are consumed one per decode step; after exhaustion, tts_pad_embed is used.
+    fn build_prefill_embeds(
+        &self,
+        text_tokens: &[u32],
+        lang_id: i64,
+    ) -> Result<(Array3<f32>, Vec<Array1<f32>>), TtsError> {
+        let tts_bos_embed = self.text_project_token(TTS_BOS);
+
+        let first_text = if text_tokens.is_empty() {
+            TTS_PAD
+        } else {
+            text_tokens[0]
+        };
+
+        // Codec prefix: [think, think_bos, lang_id, think_eos, speaker_id(=pad)]
+        let codec_prefix = [
+            CODEC_THINK,
+            CODEC_THINK_BOS,
+            lang_id,
+            CODEC_THINK_EOS,
+            CODEC_PAD,
+        ];
+
+        // 3 role + 5 codec prefix + 1 transition + 1 first text = 10
+        let seq_len = 3 + codec_prefix.len() + 2;
         let mut embeds = Array3::<f32>::zeros((1, seq_len, HIDDEN_DIM));
+        let mut pos = 0;
 
-        for (i, pos) in sequence.iter().enumerate() {
-            let text_raw = self.text_embedding.row(pos.text_token as usize);
-            let text_proj = text_project(
-                &text_raw.to_owned(),
-                &self.text_proj_fc1_weight,
-                &self.text_proj_fc1_bias,
-                &self.text_proj_fc2_weight,
-                &self.text_proj_fc2_bias,
-            );
-
-            let codec = self.talker_codec_embedding.row(pos.codec_token as usize);
-
-            let mut slot = embeds.slice_mut(s![0, i, ..]);
-            slot.assign(&(&text_proj + &codec));
+        // 1. Role prefix: text_project only, no codec component
+        for &tok in &[IM_START, ASSISTANT, NEWLINE] {
+            let embed = self.text_project_token(tok);
+            embeds.slice_mut(s![0, pos, ..]).assign(&embed);
+            pos += 1;
         }
 
-        Ok(embeds)
+        // 2. Codec prefix: tts_pad_embed + codec_embed(token)
+        for &codec_tok in &codec_prefix {
+            let mut embed = self.tts_pad_embed.clone();
+            embed += &self.talker_codec_embedding.row(codec_tok as usize);
+            embeds.slice_mut(s![0, pos, ..]).assign(&embed);
+            pos += 1;
+        }
+
+        // 3. Transition: tts_bos_embed + codec_embed(pad)
+        {
+            let mut embed = tts_bos_embed;
+            embed += &self.talker_codec_embedding.row(CODEC_PAD as usize);
+            embeds.slice_mut(s![0, pos, ..]).assign(&embed);
+            pos += 1;
+        }
+
+        // 4. First text token + codec_embed(bos)
+        {
+            let mut embed = self.text_project_token(first_text);
+            embed += &self.talker_codec_embedding.row(CODEC_BOS as usize);
+            embeds.slice_mut(s![0, pos, ..]).assign(&embed);
+        }
+
+        // Trailing text hidden: remaining text tokens + TTS_EOS
+        let mut trailing = Vec::new();
+        if text_tokens.len() > 1 {
+            for &tok in &text_tokens[1..] {
+                trailing.push(self.text_project_token(tok));
+            }
+        }
+        trailing.push(self.text_project_token(TTS_EOS));
+
+        Ok((embeds, trailing))
     }
 
     /// Run talker_prefill.onnx.
@@ -503,7 +581,11 @@ impl Model {
             .try_extract_tensor::<f32>()
             .map_err(|e| TtsError::Synthesis(format!("extract waveform: {e}")))?;
 
-        Ok(AudioFrame::new(waveform, SAMPLE_RATE).into_owned())
+        // Trim leading silence produced by the think phase.
+        let start = waveform.iter().position(|&s| s.abs() > 0.01).unwrap_or(0);
+        let trimmed = &waveform[start..];
+
+        Ok(AudioFrame::new(trimmed, SAMPLE_RATE).into_owned())
     }
 }
 
