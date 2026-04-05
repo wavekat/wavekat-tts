@@ -5,7 +5,7 @@ PYTHON ?= .venv/bin/python
 FP32_DIR = $(OUTPUT_DIR)/fp32
 INT4_DIR = $(OUTPUT_DIR)/int4
 
-.PHONY: all venv export embeddings talker code-predictor vocoder validate quantize clean help
+.PHONY: all venv export embeddings talker code-predictor vocoder validate quantize generate generate-int4 generate-zh generate-zh-int4 clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -40,10 +40,30 @@ quantize: ## Quantize FP32 models to INT4
 	$(PYTHON) quantize_int4.py --model-dir $(OUTPUT_DIR)
 
 generate: ## Generate sample audio (FP32)
-	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) --text "Hello, how are you today?"
+	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) \
+		--text "Give every small business the voice of a big one." \
+		--instruct "Speak in a warm and friendly female voice" \
+		-o sample_fp32.wav
 
 generate-int4: ## Generate sample audio (INT4)
-	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) --variant int4 --text "Hello, how are you today?"
+	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) --variant int4 \
+		--text "Give every small business the voice of a big one." \
+		--instruct "Speak in a warm and friendly female voice" \
+		-o sample_int4.wav
+
+generate-zh: ## Generate Chinese sample audio (FP32)
+	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) \
+		--text "让每一家小企业，都拥有大企业的声音。" \
+		--lang chinese \
+		--instruct "Speak slowly in a calm and steady male voice" \
+		-o sample_zh_fp32.wav
+
+generate-zh-int4: ## Generate Chinese sample audio (INT4)
+	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) --variant int4 \
+		--text "让每一家小企业，都拥有大企业的声音。" \
+		--lang chinese \
+		--instruct "Speak slowly in a calm and steady male voice" \
+		-o sample_zh_int4.wav
 
 clean: ## Remove output directory
 	rm -rf $(OUTPUT_DIR)

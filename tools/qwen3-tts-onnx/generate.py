@@ -5,19 +5,22 @@ Supports both PyTorch-only and ONNX vocoder modes.
 
 Examples:
   # Basic generation (PyTorch vocoder)
-  python generate.py --text "Hello, how are you today?"
+  python generate.py --text "Give every small business the voice of a big one." \
+    --instruct "Speak in a warm and friendly female voice"
 
   # With voice instruction
-  python generate.py --text "Hello world" --instruct "Speak slowly in a deep male voice"
+  python generate.py --text "AI phone answering for small businesses." \
+    --instruct "Speak in a professional male voice"
 
   # Chinese text
-  python generate.py --text "你好世界" --lang chinese
+  python generate.py --text "让每一家小企业，都拥有大企业的声音。" --lang chinese
 
   # Use ONNX vocoder (requires exported vocoder.onnx)
-  python generate.py --text "Hello" --onnx-vocoder ./output/qwen3-tts-1.7b-voicedesign/fp32
+  python generate.py --text "Give every small business the voice of a big one." \
+    --onnx-vocoder ./output/qwen3-tts-1.7b-voicedesign/fp32
 
   # Custom output path
-  python generate.py --text "Hello" -o hello.wav
+  python generate.py --text "Hello" -o demo.wav
 """
 
 import argparse
@@ -133,9 +136,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  python generate.py --text "Hello, how are you?"
-  python generate.py --text "Hello" --instruct "Speak in a cheerful female voice"
-  python generate.py --text "你好世界" --lang chinese
+  python generate.py --text "Give every small business the voice of a big one." --instruct "Speak in a warm and friendly female voice"
+  python generate.py --text "AI phone answering for small businesses." --instruct "Speak in a professional male voice"
+  python generate.py --text "让每一家小企业，都拥有大企业的声音。" --lang chinese
   python generate.py --text "Hello" --onnx-vocoder ./output/qwen3-tts-1.7b-voicedesign/fp32
 """,
     )

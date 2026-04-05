@@ -308,7 +308,7 @@ Examples:
         print(f"  {'TOTAL':30s}  {_fmt_size(total_input):>10s} -> {_fmt_size(total_output):>10s}  ({ratio:.1f}x)")
 
     print(f"\nUse with generate_onnx.py:")
-    print(f"  python generate_onnx.py --model-dir {model_dir} --variant int4 --text 'Hello world'")
+    print(f"  python generate_onnx.py --model-dir {model_dir} --variant int4 --text 'Give every small business the voice of a big one.'")
 
 
 if __name__ == "__main__":

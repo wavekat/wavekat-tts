@@ -33,17 +33,18 @@ Both FP32 and INT4 (weight-only, RTN) variants are included.
 pip install onnxruntime numpy soundfile transformers
 
 # FP32
-python generate_onnx.py --text "Hello, how are you today?"
+python generate_onnx.py --text "Give every small business the voice of a big one." \
+  --instruct "Speak in a warm and friendly female voice"
 
 # INT4 (~4x smaller, faster)
-python generate_onnx.py --text "Hello, how are you today?" --variant int4
-
-# With voice design instruction
-python generate_onnx.py --text "Hello" --variant int4 \
-  --instruct "Speak slowly in a deep male voice"
+python generate_onnx.py --variant int4 \
+  --text "Give every small business the voice of a big one." \
+  --instruct "Speak in a warm and friendly female voice"
 
 # Chinese
-python generate_onnx.py --text "你好世界" --lang chinese --variant int4
+python generate_onnx.py --variant int4 --lang chinese \
+  --text "让每一家小企业，都拥有大企业的声音。" \
+  --instruct "Speak in a warm and professional female voice"
 ```
 
 ## Model Architecture

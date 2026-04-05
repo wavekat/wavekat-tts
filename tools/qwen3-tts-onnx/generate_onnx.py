@@ -13,19 +13,22 @@ matching the official Qwen3-TTS inference flow. It uses:
 
 Examples:
   # Basic generation (FP32)
-  python generate_onnx.py --text "Hello, how are you today?"
+  python generate_onnx.py --text "Give every small business the voice of a big one." \
+    --instruct "Speak in a warm and friendly female voice"
 
   # Use INT4 quantized models
-  python generate_onnx.py --text "Hello" --variant int4
-
-  # With voice design instruction
-  python generate_onnx.py --text "Hello" --instruct "Speak slowly in a deep male voice"
+  python generate_onnx.py --variant int4 \
+    --text "Give every small business the voice of a big one." \
+    --instruct "Speak in a warm and friendly female voice"
 
   # Chinese text
-  python generate_onnx.py --text "你好世界" --lang chinese
+  python generate_onnx.py --variant int4 --lang chinese \
+    --text "让每一家小企业，都拥有大企业的声音。" \
+    --instruct "Speak in a warm and professional female voice"
 
   # Custom output + params
-  python generate_onnx.py --text "Hello" -o hello.wav --temperature 0.7
+  python generate_onnx.py --text "AI phone answering for small businesses." \
+    -o demo.wav --temperature 0.7
 """
 
 import argparse
@@ -378,11 +381,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  python generate_onnx.py --text "Hello, how are you?"
-  python generate_onnx.py --text "Hello" --variant int4
-  python generate_onnx.py --text "Hello" --instruct "Speak in a cheerful female voice"
-  python generate_onnx.py --text "你好世界" --lang chinese
-  python generate_onnx.py --text "Hello" -o hello.wav --temperature 0.7
+  python generate_onnx.py --text "Give every small business the voice of a big one." --instruct "Speak in a warm and friendly female voice"
+  python generate_onnx.py --variant int4 --text "AI phone answering for small businesses." --instruct "Speak in a professional male voice"
+  python generate_onnx.py --variant int4 --lang chinese --text "让每一家小企业，都拥有大企业的声音。"
+  python generate_onnx.py --text "Hello" -o demo.wav --temperature 0.7
 """,
     )
     parser.add_argument("--text", required=True, help="Text to synthesize")
