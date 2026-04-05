@@ -1,2 +1,5 @@
 output/
 __pycache__/
+.venv/
+.claude/
+*.wav
