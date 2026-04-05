@@ -27,6 +27,11 @@ ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
 npyz = { version = "0.8", optional = true }
 rand = { version = "0.9", optional = true }
+hound = { version = "3.5", optional = true }
 
 [dev-dependencies]
 hound = "3.5"
+
+[[example]]
+name = "synthesize"
+required-features = ["qwen3-tts", "hound"]
