@@ -33,7 +33,7 @@ cargo add wavekat-tts --features qwen3-tts
 use wavekat_tts::{TtsBackend, SynthesizeRequest};
 use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
 
-let tts = Qwen3Tts::new()?;
+let tts = Qwen3Tts::new("models/qwen3-tts-0.6b")?;
 let request = SynthesizeRequest::new("Hello, world");
 let audio = tts.synthesize(&request)?;
 
@@ -59,6 +59,20 @@ Two trait families:
 
 - **`TtsBackend`** — batch synthesis: text → `AudioFrame<'static>`
 - **`StreamingTtsBackend`** — streaming: text → iterator of `AudioFrame<'static>` chunks
+
+## Examples
+
+Generate a WAV file from text (requires model files):
+
+```sh
+cargo run --example synthesize --features qwen3-tts,hound -- "Hello, world!"
+cargo run --example synthesize --features qwen3-tts,hound -- --language zh "你好世界"
+cargo run --example synthesize --features qwen3-tts,hound -- --model-dir /path/to/model --output hello.wav "Hello"
+```
+
+Model files: download the ONNX export from
+[`elbruno/Qwen3-TTS-12Hz-0.6B-Base-ONNX`](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-Base-ONNX)
+and place in `models/qwen3-tts-0.6b/`.
 
 ## Feature flags
 
