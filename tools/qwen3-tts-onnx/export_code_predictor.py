@@ -80,7 +80,8 @@ class CodePredictorWrapper(nn.Module):
 
 
 def export_code_predictor(model_id: str, output_dir: str):
-    os.makedirs(output_dir, exist_ok=True)
+    fp32_dir = os.path.join(output_dir, "fp32")
+    os.makedirs(fp32_dir, exist_ok=True)
     patch_causal_mask()
 
     print(f"Loading model: {model_id}")
@@ -125,7 +126,7 @@ def export_code_predictor(model_id: str, output_dir: str):
         "present_values": {3: "total_seq"},
     }
 
-    onnx_path = os.path.join(output_dir, "code_predictor.onnx")
+    onnx_path = os.path.join(fp32_dir, "code_predictor.onnx")
 
     print("\nExporting code_predictor.onnx ...")
     with torch.no_grad():

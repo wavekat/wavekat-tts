@@ -343,12 +343,12 @@ def validate_vocoder(model, output_dir):
 # Stage 6: End-to-end greedy decode
 # ---------------------------------------------------------------------------
 
-def validate_end_to_end(model, output_dir):
+def validate_end_to_end(model, root_dir, onnx_dir):
     """End-to-end: PyTorch greedy decode vs ONNX greedy decode on same text."""
     print("\n=== Stage 6: End-to-End Validation ===")
 
-    config = load_config(output_dir)
-    emb = load_embeddings(output_dir)
+    config = load_config(root_dir)
+    emb = load_embeddings(root_dir)
     talker_cfg = model.config.talker_config
     cp_cfg = talker_cfg.code_predictor_config
 
@@ -356,14 +356,14 @@ def validate_end_to_end(model, output_dir):
     required_files = ["talker_prefill.onnx", "talker_decode.onnx",
                       "code_predictor.onnx", "vocoder.onnx"]
     for f in required_files:
-        if not os.path.exists(os.path.join(output_dir, f)):
+        if not os.path.exists(os.path.join(onnx_dir, f)):
             print(f"  SKIP: {f} not found")
             return True
 
-    prefill_sess = ort.InferenceSession(os.path.join(output_dir, "talker_prefill.onnx"))
-    decode_sess = ort.InferenceSession(os.path.join(output_dir, "talker_decode.onnx"))
-    cp_sess = ort.InferenceSession(os.path.join(output_dir, "code_predictor.onnx"))
-    vocoder_sess = ort.InferenceSession(os.path.join(output_dir, "vocoder.onnx"))
+    prefill_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_prefill.onnx"))
+    decode_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_decode.onnx"))
+    cp_sess = ort.InferenceSession(os.path.join(onnx_dir, "code_predictor.onnx"))
+    vocoder_sess = ort.InferenceSession(os.path.join(onnx_dir, "vocoder.onnx"))
 
     # ---- Run PyTorch inference ----
     test_text = ("The sun rose slowly over the mountains, casting long golden shadows "
@@ -378,7 +378,7 @@ def validate_end_to_end(model, output_dir):
     print(f"  Text: '{test_text}', language={language}, speaker={speaker}")
 
     tokenizer = AutoTokenizer.from_pretrained(
-        os.path.join(output_dir, "tokenizer")
+        os.path.join(root_dir, "tokenizer")
     )
 
     # Format text as chat template (matches official format)
@@ -449,7 +449,7 @@ def validate_end_to_end(model, output_dir):
               f"len_match={'yes' if len_match else 'no (%d vs %d)' % (len(onnx_codes), pt_codes_arr.shape[0])})")
 
     # Decode to audio — use ONNX vocoder (dynamic T) for full ONNX-only validation
-    wav_dir = os.path.join(output_dir, "validation")
+    wav_dir = os.path.join(root_dir, "validation")
     os.makedirs(wav_dir, exist_ok=True)
     if min_len > 0:
         pt_vocoder_input = pt_codes_trimmed.T[np.newaxis, :, :].astype(np.int64)
@@ -736,6 +736,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate Qwen3-TTS ONNX exports")
     parser.add_argument("--model-id", default="Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
     parser.add_argument("--onnx-dir", default="./output/qwen3-tts-1.7b-voicedesign")
+    parser.add_argument("--variant", default="fp32", help="ONNX variant subfolder (default: fp32)")
     parser.add_argument("--stages", default="1,2,3,4,5,6", help="Comma-separated stage numbers")
     args = parser.parse_args()
 
@@ -747,20 +748,23 @@ def main():
     )
     model.eval()
 
+    root_dir = args.onnx_dir
+    onnx_subdir = os.path.join(root_dir, args.variant)
+
     results = {}
 
     if 1 in stages:
-        results[1] = validate_embeddings(model, args.onnx_dir)
+        results[1] = validate_embeddings(model, root_dir)
     if 2 in stages:
-        results[2] = validate_talker_prefill(model, args.onnx_dir)
+        results[2] = validate_talker_prefill(model, onnx_subdir)
     if 3 in stages:
-        results[3] = validate_talker_decode(model, args.onnx_dir)
+        results[3] = validate_talker_decode(model, onnx_subdir)
     if 4 in stages:
-        results[4] = validate_code_predictor(model, args.onnx_dir)
+        results[4] = validate_code_predictor(model, onnx_subdir)
     if 5 in stages:
-        results[5] = validate_vocoder(model, args.onnx_dir)
+        results[5] = validate_vocoder(model, onnx_subdir)
     if 6 in stages:
-        results[6] = validate_end_to_end(model, args.onnx_dir)
+        results[6] = validate_end_to_end(model, root_dir, onnx_subdir)
 
     print("\n" + "=" * 50)
     print("VALIDATION SUMMARY")

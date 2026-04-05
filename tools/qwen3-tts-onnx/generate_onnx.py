@@ -12,8 +12,11 @@ matching the official Qwen3-TTS inference flow. It uses:
   - config.json            (model dimensions, token IDs, sampling config)
 
 Examples:
-  # Basic generation
+  # Basic generation (FP32)
   python generate_onnx.py --text "Hello, how are you today?"
+
+  # Use INT4 quantized models
+  python generate_onnx.py --text "Hello" --variant int4
 
   # With voice design instruction
   python generate_onnx.py --text "Hello" --instruct "Speak slowly in a deep male voice"
@@ -105,7 +108,8 @@ def sample_top_k(logits, top_k, temperature):
 # ---------------------------------------------------------------------------
 
 def generate_onnx(
-    onnx_dir: str,
+    model_dir: str,
+    variant: str,
     text: str,
     instruct: str | None,
     language: str,
@@ -119,12 +123,13 @@ def generate_onnx(
     if seed is not None:
         np.random.seed(seed)
 
-    config = load_config(onnx_dir)
-    emb = load_embeddings(onnx_dir)
-    tokenizer = AutoTokenizer.from_pretrained(os.path.join(onnx_dir, "tokenizer"))
+    onnx_dir = os.path.join(model_dir, variant)
+    config = load_config(model_dir)
+    emb = load_embeddings(model_dir)
+    tokenizer = AutoTokenizer.from_pretrained(os.path.join(model_dir, "tokenizer"))
 
     # Load ONNX sessions
-    print("Loading ONNX models...")
+    print(f"Loading ONNX models ({variant})...")
     prefill_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_prefill.onnx"))
     decode_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_decode.onnx"))
     cp_sess = ort.InferenceSession(os.path.join(onnx_dir, "code_predictor.onnx"))
@@ -374,6 +379,7 @@ def main():
         epilog="""\
 Examples:
   python generate_onnx.py --text "Hello, how are you?"
+  python generate_onnx.py --text "Hello" --variant int4
   python generate_onnx.py --text "Hello" --instruct "Speak in a cheerful female voice"
   python generate_onnx.py --text "你好世界" --lang chinese
   python generate_onnx.py --text "Hello" -o hello.wav --temperature 0.7
@@ -384,8 +390,10 @@ Examples:
                         help="Voice design instruction (e.g. 'Speak slowly in a deep male voice')")
     parser.add_argument("--lang", default="english",
                         help="Language (default: english)")
-    parser.add_argument("--onnx-dir", default="./output/qwen3-tts-1.7b-voicedesign",
-                        help="Path to ONNX export directory")
+    parser.add_argument("--model-dir", default="./output/qwen3-tts-1.7b-voicedesign",
+                        help="Root model directory (contains config.json, tokenizer/, embeddings/, fp32/, int4/)")
+    parser.add_argument("--variant", default="fp32",
+                        help="ONNX variant: fp32 or int4 (default: fp32)")
     parser.add_argument("-o", "--output", default="output.wav",
                         help="Output WAV path (default: output.wav)")
     parser.add_argument("--max-tokens", type=int, default=2048,
@@ -401,7 +409,8 @@ Examples:
     args = parser.parse_args()
 
     generate_onnx(
-        onnx_dir=args.onnx_dir,
+        model_dir=args.model_dir,
+        variant=args.variant,
         text=args.text,
         instruct=args.instruct,
         language=args.lang,

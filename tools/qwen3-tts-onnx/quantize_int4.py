@@ -15,8 +15,8 @@ Examples:
   # Quantize only transformer models (skip vocoder)
   python quantize_int4.py --skip-vocoder
 
-  # Custom paths
-  python quantize_int4.py --input-dir ./output/my-model --output-dir ./output/my-model-int4
+  # Custom model directory
+  python quantize_int4.py --model-dir ./output/my-model
 
   # Custom block size
   python quantize_int4.py --block-size 64
@@ -211,18 +211,13 @@ Examples:
   python quantize_int4.py
   python quantize_int4.py --skip-vocoder
   python quantize_int4.py --block-size 64
-  python quantize_int4.py --input-dir ./output/my-model --output-dir ./output/my-model-int4
+  python quantize_int4.py --model-dir ./output/my-model
 """,
     )
     parser.add_argument(
-        "--input-dir",
+        "--model-dir",
         default="./output/qwen3-tts-1.7b-voicedesign",
-        help="Directory containing FP32 ONNX models (default: ./output/qwen3-tts-1.7b-voicedesign)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=None,
-        help="Output directory for INT4 models (default: <input-dir>-int4)",
+        help="Root model directory containing fp32/ subfolder (default: ./output/qwen3-tts-1.7b-voicedesign)",
     )
     parser.add_argument(
         "--block-size",
@@ -248,11 +243,12 @@ Examples:
     )
     args = parser.parse_args()
 
-    input_dir = os.path.abspath(args.input_dir)
-    output_dir = args.output_dir or (input_dir.rstrip("/") + "-int4")
-    output_dir = os.path.abspath(output_dir)
+    model_dir = os.path.abspath(args.model_dir)
+    input_dir = os.path.join(model_dir, "fp32")
+    output_dir = os.path.join(model_dir, "int4")
 
     print(f"INT4 Weight-Only Quantization (RTN)")
+    print(f"  Model dir: {model_dir}")
     print(f"  Input:  {input_dir}")
     print(f"  Output: {output_dir}")
     print(f"  Block size: {args.block_size}")
@@ -260,17 +256,6 @@ Examples:
     print(f"  Skip vocoder: {args.skip_vocoder}")
 
     os.makedirs(output_dir, exist_ok=True)
-
-    # Copy non-ONNX files (embeddings, tokenizer, config)
-    for item in ["embeddings", "tokenizer", "config.json"]:
-        src = os.path.join(input_dir, item)
-        dst = os.path.join(output_dir, item)
-        if os.path.exists(src) and not os.path.exists(dst):
-            if os.path.isdir(src):
-                shutil.copytree(src, dst)
-            else:
-                shutil.copy2(src, dst)
-            print(f"  Copied: {item}")
 
     # Quantize each model
     models = list(MODELS_TO_QUANTIZE)
@@ -323,7 +308,7 @@ Examples:
         print(f"  {'TOTAL':30s}  {_fmt_size(total_input):>10s} -> {_fmt_size(total_output):>10s}  ({ratio:.1f}x)")
 
     print(f"\nUse with generate_onnx.py:")
-    print(f"  python generate_onnx.py --onnx-dir {output_dir} --text 'Hello world'")
+    print(f"  python generate_onnx.py --model-dir {model_dir} --variant int4 --text 'Hello world'")
 
 
 if __name__ == "__main__":

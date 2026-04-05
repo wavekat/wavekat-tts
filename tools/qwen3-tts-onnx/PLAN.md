@@ -325,14 +325,10 @@ python validate.py           --model-id "$MODEL_ID" --onnx-dir "$OUTPUT_DIR"
 
 ```
 output/qwen3-tts-1.7b-voicedesign/
-  talker_prefill.onnx
-  talker_prefill.onnx.data
-  talker_decode.onnx
-  talker_decode.onnx.data
-  code_predictor.onnx
-  code_predictor.onnx.data
-  vocoder.onnx
-  vocoder.onnx.data
+  config.json
+  tokenizer/
+    vocab.json
+    merges.txt
   embeddings/
     text_embedding.npy
     text_projection_fc1_weight.npy
@@ -345,10 +341,16 @@ output/qwen3-tts-1.7b-voicedesign/
     cp_codec_embedding_14.npy
     small_to_mtp_projection_weight.npy
     small_to_mtp_projection_bias.npy
-  tokenizer/
-    vocab.json
-    merges.txt
-  config.json
+  fp32/
+    talker_prefill.onnx + .onnx.data
+    talker_decode.onnx + .onnx.data
+    code_predictor.onnx + .onnx.data
+    vocoder.onnx + .onnx.data
+  int4/
+    talker_prefill.onnx + .onnx.data
+    talker_decode.onnx + .onnx.data
+    code_predictor.onnx + .onnx.data
+    vocoder.onnx + .onnx.data
 ```
 
 ## Supporting All Models Later

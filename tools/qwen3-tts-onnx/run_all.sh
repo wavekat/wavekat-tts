@@ -16,24 +16,30 @@ echo "Model:  $MODEL_ID"
 echo "Output: $OUTPUT_DIR"
 echo ""
 
-echo "=== Step 1/5: Export embeddings ==="
+echo "=== Step 1/6: Export embeddings ==="
 python export_embeddings.py --model-id "$MODEL_ID" --output-dir "$OUTPUT_DIR"
 
 echo ""
-echo "=== Step 2/5: Export talker (prefill + decode) ==="
+echo "=== Step 2/6: Export talker (prefill + decode) ==="
 python export_talker.py --model-id "$MODEL_ID" --output-dir "$OUTPUT_DIR"
 
 echo ""
-echo "=== Step 3/5: Export code predictor ==="
+echo "=== Step 3/6: Export code predictor ==="
 python export_code_predictor.py --model-id "$MODEL_ID" --output-dir "$OUTPUT_DIR"
 
 echo ""
-echo "=== Step 4/5: Export vocoder ==="
+echo "=== Step 4/6: Export vocoder ==="
 python export_vocoder.py --model-id "$MODEL_ID" --output-dir "$OUTPUT_DIR"
 
 echo ""
-echo "=== Step 5/5: Validate ==="
+echo "=== Step 5/6: Validate ==="
 python validate.py --model-id "$MODEL_ID" --onnx-dir "$OUTPUT_DIR"
 
 echo ""
-echo "Done! ONNX files are in: $OUTPUT_DIR"
+echo "=== Step 6/6: Quantize INT4 ==="
+python quantize_int4.py --model-dir "$OUTPUT_DIR"
+
+echo ""
+echo "Done! Output directory: $OUTPUT_DIR"
+echo "  FP32 models: $OUTPUT_DIR/fp32/"
+echo "  INT4 models: $OUTPUT_DIR/int4/"

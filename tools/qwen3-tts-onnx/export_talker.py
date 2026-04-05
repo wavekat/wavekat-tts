@@ -97,7 +97,8 @@ class TalkerDecodeWrapper(nn.Module):
 
 
 def export_talker(model_id: str, output_dir: str):
-    os.makedirs(output_dir, exist_ok=True)
+    fp32_dir = os.path.join(output_dir, "fp32")
+    os.makedirs(fp32_dir, exist_ok=True)
 
     # Patch causal mask creation to avoid torch.vmap (incompatible with ONNX export)
     patch_causal_mask()
@@ -146,7 +147,7 @@ def export_talker(model_id: str, output_dir: str):
         prefill_dynamic[f"present_key_{i}"] = {2: "seq_len"}
         prefill_dynamic[f"present_value_{i}"] = {2: "seq_len"}
 
-    prefill_path = os.path.join(output_dir, "talker_prefill.onnx")
+    prefill_path = os.path.join(fp32_dir, "talker_prefill.onnx")
     with torch.no_grad():
         torch.onnx.export(
             prefill_wrapper,
@@ -187,7 +188,7 @@ def export_talker(model_id: str, output_dir: str):
         "present_values": {3: "total_seq"},
     }
 
-    decode_path = os.path.join(output_dir, "talker_decode.onnx")
+    decode_path = os.path.join(fp32_dir, "talker_decode.onnx")
     with torch.no_grad():
         torch.onnx.export(
             decode_wrapper,

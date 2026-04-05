@@ -62,7 +62,8 @@ class VocoderWrapper(nn.Module):
 
 
 def export_vocoder(model_id: str, output_dir: str):
-    os.makedirs(output_dir, exist_ok=True)
+    fp32_dir = os.path.join(output_dir, "fp32")
+    os.makedirs(fp32_dir, exist_ok=True)
 
     print(f"Loading model: {model_id}")
     model = Qwen3TTSForConditionalGeneration.from_pretrained(
@@ -86,7 +87,7 @@ def export_vocoder(model_id: str, output_dir: str):
     T = 100
     dummy_codes = torch.randint(0, 2048, (1, num_quantizers, T), dtype=torch.int64)
 
-    onnx_path = os.path.join(output_dir, "vocoder.onnx")
+    onnx_path = os.path.join(fp32_dir, "vocoder.onnx")
 
     print(f"\nExporting vocoder.onnx (dynamo, dynamic T, traced with T={T}) ...")
 

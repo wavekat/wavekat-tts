@@ -14,7 +14,7 @@ Examples:
   python generate.py --text "你好世界" --lang chinese
 
   # Use ONNX vocoder (requires exported vocoder.onnx)
-  python generate.py --text "Hello" --onnx-vocoder ./output/qwen3-tts-1.7b-voicedesign
+  python generate.py --text "Hello" --onnx-vocoder ./output/qwen3-tts-1.7b-voicedesign/fp32
 
   # Custom output path
   python generate.py --text "Hello" -o hello.wav
@@ -136,7 +136,7 @@ Examples:
   python generate.py --text "Hello, how are you?"
   python generate.py --text "Hello" --instruct "Speak in a cheerful female voice"
   python generate.py --text "你好世界" --lang chinese
-  python generate.py --text "Hello" --onnx-vocoder ./output/qwen3-tts-1.7b-voicedesign
+  python generate.py --text "Hello" --onnx-vocoder ./output/qwen3-tts-1.7b-voicedesign/fp32
 """,
     )
     parser.add_argument("--text", required=True, help="Text to synthesize")
