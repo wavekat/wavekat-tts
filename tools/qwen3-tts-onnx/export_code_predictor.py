@@ -129,6 +129,7 @@ def export_code_predictor(model_id: str, output_dir: str):
     onnx_path = os.path.join(fp32_dir, "code_predictor.onnx")
 
     print("\nExporting code_predictor.onnx ...")
+    pre_export = set(os.listdir(fp32_dir)) if os.path.exists(fp32_dir) else set()
     with torch.no_grad():
         torch.onnx.export(
             wrapper,
@@ -142,7 +143,7 @@ def export_code_predictor(model_id: str, output_dir: str):
         )
 
     # Consolidate external data
-    _consolidate(onnx_path)
+    _consolidate(onnx_path, pre_export)
     print(f"  Saved: {onnx_path}")
 
     # Quick validation
@@ -159,9 +160,11 @@ def export_code_predictor(model_id: str, output_dir: str):
     print("\nCode predictor export complete.")
 
 
-def _consolidate(onnx_path: str):
-    """Consolidate external data into a single .onnx.data file."""
+def _consolidate(onnx_path: str, pre_export_files: set | None = None):
+    """Consolidate external data into a single .onnx.data file and clean up."""
+    onnx_dir = os.path.dirname(onnx_path)
     data_path = onnx_path + ".data"
+
     model = onnx.load(onnx_path)
     onnx.save_model(
         model,
@@ -170,6 +173,19 @@ def _consolidate(onnx_path: str):
         all_tensors_to_one_file=True,
         location=os.path.basename(data_path),
     )
+
+    if pre_export_files is not None:
+        current_files = set(os.listdir(onnx_dir))
+        scattered = current_files - pre_export_files - {
+            os.path.basename(onnx_path),
+            os.path.basename(data_path),
+        }
+        for f in scattered:
+            path = os.path.join(onnx_dir, f)
+            if os.path.isfile(path):
+                os.remove(path)
+        if scattered:
+            print(f"  Cleaned up {len(scattered)} scattered external data files")
 
 
 def _validate(wrapper, embeds, gen_steps, past_keys, past_values, onnx_path):

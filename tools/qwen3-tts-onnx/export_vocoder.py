@@ -95,6 +95,7 @@ def export_vocoder(model_id: str, output_dir: str):
     num_frames = torch.export.Dim("num_frames", min=2, max=4096)
     dynamic_shapes = {"codes": {2: num_frames}}
 
+    pre_export = set(os.listdir(fp32_dir)) if os.path.exists(fp32_dir) else set()
     with torch.no_grad():
         torch.onnx.export(
             wrapper,
@@ -109,7 +110,7 @@ def export_vocoder(model_id: str, output_dir: str):
     print(f"  Saved: {onnx_path}")
 
     # Consolidate if external data files were created
-    _try_consolidate(onnx_path)
+    _try_consolidate(onnx_path, pre_export)
 
     # Validate at the trace size
     _validate(wrapper, dummy_codes, onnx_path)
@@ -122,14 +123,11 @@ def export_vocoder(model_id: str, output_dir: str):
     print(f"\nVocoder export complete (dynamic sequence length).")
 
 
-def _try_consolidate(onnx_path: str):
+def _try_consolidate(onnx_path: str, pre_export_files: set | None = None):
     """Consolidate external data into a single .onnx.data file if needed."""
-    data_path = onnx_path + ".data"
-    # Check if there are external data files to consolidate
     onnx_dir = os.path.dirname(onnx_path)
-    basename = os.path.basename(onnx_path)
+    data_path = onnx_path + ".data"
 
-    # The dynamo exporter may create .onnx_data or other external files
     try:
         model = onnx.load(onnx_path)
         onnx.save_model(
@@ -141,6 +139,20 @@ def _try_consolidate(onnx_path: str):
         )
     except Exception as e:
         print(f"  Note: consolidation skipped ({e})")
+        return
+
+    if pre_export_files is not None:
+        current_files = set(os.listdir(onnx_dir))
+        scattered = current_files - pre_export_files - {
+            os.path.basename(onnx_path),
+            os.path.basename(data_path),
+        }
+        for f in scattered:
+            path = os.path.join(onnx_dir, f)
+            if os.path.isfile(path):
+                os.remove(path)
+        if scattered:
+            print(f"  Cleaned up {len(scattered)} scattered external data files")
 
 
 def _validate(wrapper, codes, onnx_path, label=None):

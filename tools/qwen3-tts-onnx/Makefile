@@ -1,6 +1,6 @@
 MODEL_ID ?= Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
 OUTPUT_DIR ?= ./output/qwen3-tts-1.7b-voicedesign
-PYTHON ?= python
+PYTHON ?= .venv/bin/python
 
 FP32_DIR = $(OUTPUT_DIR)/fp32
 INT4_DIR = $(OUTPUT_DIR)/int4

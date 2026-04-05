@@ -148,6 +148,7 @@ def export_talker(model_id: str, output_dir: str):
         prefill_dynamic[f"present_value_{i}"] = {2: "seq_len"}
 
     prefill_path = os.path.join(fp32_dir, "talker_prefill.onnx")
+    pre_export = set(os.listdir(fp32_dir)) if os.path.exists(fp32_dir) else set()
     with torch.no_grad():
         torch.onnx.export(
             prefill_wrapper,
@@ -160,7 +161,7 @@ def export_talker(model_id: str, output_dir: str):
             dynamic_axes=prefill_dynamic,
         )
 
-    _consolidate(prefill_path)
+    _consolidate(prefill_path, pre_export)
     print(f"  Saved: {prefill_path}")
     _validate_prefill(prefill_wrapper, dummy_embeds, dummy_mask, dummy_pos, prefill_path)
 
@@ -189,6 +190,7 @@ def export_talker(model_id: str, output_dir: str):
     }
 
     decode_path = os.path.join(fp32_dir, "talker_decode.onnx")
+    pre_export = set(os.listdir(fp32_dir))
     with torch.no_grad():
         torch.onnx.export(
             decode_wrapper,
@@ -203,7 +205,7 @@ def export_talker(model_id: str, output_dir: str):
             dynamic_axes=decode_dynamic,
         )
 
-    _consolidate(decode_path)
+    _consolidate(decode_path, pre_export)
     print(f"  Saved: {decode_path}")
     _validate_decode(
         decode_wrapper, dummy_decode_embeds, dummy_decode_mask, dummy_decode_pos,
@@ -213,9 +215,11 @@ def export_talker(model_id: str, output_dir: str):
     print("\nTalker export complete.")
 
 
-def _consolidate(onnx_path: str):
-    """Consolidate external data into a single .onnx.data file."""
+def _consolidate(onnx_path: str, pre_export_files: set | None = None):
+    """Consolidate external data into a single .onnx.data file and clean up."""
+    onnx_dir = os.path.dirname(onnx_path)
     data_path = onnx_path + ".data"
+
     model = onnx.load(onnx_path)
     onnx.save_model(
         model,
@@ -224,6 +228,20 @@ def _consolidate(onnx_path: str):
         all_tensors_to_one_file=True,
         location=os.path.basename(data_path),
     )
+
+    # Remove scattered external data files created by torch.onnx.export
+    if pre_export_files is not None:
+        current_files = set(os.listdir(onnx_dir))
+        scattered = current_files - pre_export_files - {
+            os.path.basename(onnx_path),
+            os.path.basename(data_path),
+        }
+        for f in scattered:
+            path = os.path.join(onnx_dir, f)
+            if os.path.isfile(path):
+                os.remove(path)
+        if scattered:
+            print(f"  Cleaned up {len(scattered)} scattered external data files")
 
 
 def _validate_prefill(wrapper, embeds, mask, pos, onnx_path):
