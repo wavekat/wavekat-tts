@@ -1,7 +1,7 @@
 //! Synthesize text to a WAV file using Qwen3-TTS.
 //!
 //! Usage:
-//!   cargo run --example synthesize --features qwen3-tts,hound -- [OPTIONS] [TEXT]
+//!   cargo run --example synthesize --features qwen3-tts -- [OPTIONS] [TEXT]
 //!
 //! Options:
 //!   --model-dir <PATH>      Model directory (default: auto-download to cache)
@@ -22,9 +22,9 @@
 //!   Empty line or Ctrl-D    Quit
 //!
 //! Example:
-//!   cargo run --example synthesize --features qwen3-tts,hound -- "Hello, world!"
-//!   cargo run --example synthesize --features qwen3-tts,hound -- -i
-//!   cargo run --example synthesize --features qwen3-tts,hound -- --precision fp32 -i
+//!   cargo run --example synthesize --features qwen3-tts -- "Hello, world!"
+//!   cargo run --example synthesize --features qwen3-tts -- -i
+//!   cargo run --example synthesize --features qwen3-tts -- --precision fp32 -i
 
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -231,17 +231,7 @@ fn synthesize_one(
         rtf,
     );
 
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: audio.sample_rate(),
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let mut writer = hound::WavWriter::create(output, spec).expect("failed to create WAV file");
-    for &sample in audio.samples() {
-        writer.write_sample(sample).expect("failed to write sample");
-    }
-    writer.finalize().expect("failed to finalize WAV");
+    audio.write_wav(output).expect("failed to write WAV");
 
     eprintln!("Wrote {}", output.display());
 }
