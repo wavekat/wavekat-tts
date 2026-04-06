@@ -107,3 +107,21 @@ jobs:
             --repo-type model \
             --commit-message "export: ${{ inputs.model_id }} (run #${{ github.run_number }})" \
             ${REVISION:+--revision "$REVISION"}
+
+      - name: Job summary
+        if: always()
+        run: |
+          REVISION="${{ inputs.revision }}"
+          REVISION_DISPLAY="${REVISION:-main}"
+          HF_URL="https://huggingface.co/${{ inputs.hf_repo }}/tree/${REVISION_DISPLAY}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## ONNX Export Summary
+
+          | | |
+          |---|---|
+          | **Source model** | \`${{ inputs.model_id }}\` |
+          | **HuggingFace repo** | [${{ inputs.hf_repo }}](${HF_URL}) |
+          | **Revision** | \`${REVISION_DISPLAY}\` |
+          | **Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+          | **Validation** | ${{ inputs.skip_validation && 'skipped' || 'passed' }} |
+          EOF
