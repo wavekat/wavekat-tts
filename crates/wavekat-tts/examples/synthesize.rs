@@ -5,6 +5,7 @@
 //!
 //! Options:
 //!   --model-dir <PATH>      Model directory (default: auto-download to cache)
+//!   --precision <PREC>      Model precision: int4 (default) or fp32
 //!   --language <LANG>       Language code (default: en)
 //!   --instruction <TEXT>    Voice style instruction (VoiceDesign prompt)
 //!                           Default: "Speak naturally and clearly."
@@ -23,11 +24,12 @@
 //! Example:
 //!   cargo run --example synthesize --features qwen3-tts,hound -- "Hello, world!"
 //!   cargo run --example synthesize --features qwen3-tts,hound -- -i
+//!   cargo run --example synthesize --features qwen3-tts,hound -- --precision fp32 -i
 
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
-use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
+use wavekat_tts::backends::qwen3_tts::{ModelPrecision, Qwen3Tts};
 use wavekat_tts::{SynthesizeRequest, TtsBackend};
 
 const DEFAULT_INSTRUCTION: &str = "Speak naturally and clearly.";
@@ -36,6 +38,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     let mut model_dir: Option<PathBuf> = None;
+    let mut precision = ModelPrecision::Int4;
     let mut language = "en".to_string();
     let mut instruction: Option<String> = None;
     let mut output = PathBuf::from("output.wav");
@@ -48,6 +51,17 @@ fn main() {
             "--model-dir" => {
                 i += 1;
                 model_dir = Some(PathBuf::from(&args[i]));
+            }
+            "--precision" => {
+                i += 1;
+                precision = match args[i].as_str() {
+                    "int4" => ModelPrecision::Int4,
+                    "fp32" => ModelPrecision::Fp32,
+                    other => {
+                        eprintln!("error: unknown precision \"{other}\", expected int4 or fp32");
+                        std::process::exit(1);
+                    }
+                };
             }
             "--language" => {
                 i += 1;
@@ -71,6 +85,7 @@ fn main() {
     if text.is_empty() && !interactive {
         eprintln!("Usage: synthesize [OPTIONS] [TEXT]");
         eprintln!("  --model-dir <PATH>       Model directory (default: auto-download)");
+        eprintln!("  --precision <PREC>       Model precision: int4 (default) or fp32");
         eprintln!("  --language <LANG>        Language code (default: en)");
         eprintln!("  --instruction <TEXT>     Voice style instruction (VoiceDesign prompt)");
         eprintln!("                           Default: \"{DEFAULT_INSTRUCTION}\"");
@@ -86,8 +101,8 @@ fn main() {
 
     eprintln!("Loading model ...");
     let tts = match model_dir {
-        Some(dir) => Qwen3Tts::from_dir(dir).expect("failed to load model"),
-        None => Qwen3Tts::new().expect("failed to load model"),
+        Some(dir) => Qwen3Tts::from_dir(dir, precision).expect("failed to load model"),
+        None => Qwen3Tts::new_with_precision(precision).expect("failed to load model"),
     };
 
     if interactive {

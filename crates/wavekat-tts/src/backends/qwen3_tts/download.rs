@@ -10,13 +10,8 @@ use crate::TtsError;
 const REPO_ID: &str = "wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX";
 const REVISION: &str = "2026-04-06";
 
-/// Files required for INT4 inference (ONNX models + embeddings + tokenizer).
-///
-/// `embeddings/small_to_mtp_projection_{weight,bias}.npy` are intentionally
-/// excluded — that projection is baked into `code_predictor.onnx`.
-const MODEL_FILES: &[&str] = &[
-    "config.json",
-    // INT4 ONNX models
+/// ONNX model files for INT4 precision.
+const ONNX_FILES_INT4: &[&str] = &[
     "int4/talker_prefill.onnx",
     "int4/talker_prefill.onnx.data",
     "int4/talker_decode.onnx",
@@ -25,6 +20,26 @@ const MODEL_FILES: &[&str] = &[
     "int4/code_predictor.onnx.data",
     "int4/vocoder.onnx",
     "int4/vocoder.onnx.data",
+];
+
+/// ONNX model files for FP32 precision.
+const ONNX_FILES_FP32: &[&str] = &[
+    "fp32/talker_prefill.onnx",
+    "fp32/talker_prefill.onnx.data",
+    "fp32/talker_decode.onnx",
+    "fp32/talker_decode.onnx.data",
+    "fp32/code_predictor.onnx",
+    "fp32/code_predictor.onnx.data",
+    "fp32/vocoder.onnx",
+    "fp32/vocoder.onnx.data",
+];
+
+/// Shared files required for all precision variants (embeddings + tokenizer + config).
+///
+/// `embeddings/small_to_mtp_projection_{weight,bias}.npy` are intentionally
+/// excluded — that projection is baked into `code_predictor.onnx`.
+const SHARED_FILES: &[&str] = &[
+    "config.json",
     // Embedding tables
     "embeddings/text_embedding.npy",
     "embeddings/text_projection_fc1_weight.npy",
@@ -56,14 +71,14 @@ const MODEL_FILES: &[&str] = &[
 /// downloading any missing files as needed.
 ///
 /// Set `WAVEKAT_MODEL_DIR` to skip HF Hub and load from a local directory
-/// that mirrors the repo layout (`int4/`, `embeddings/`, `tokenizer/`).
+/// that mirrors the repo layout (`int4/` or `fp32/`, `embeddings/`, `tokenizer/`).
 ///
 /// Authentication: set `HF_TOKEN` if the repo requires it.  hf-hub 0.5 does
 /// not read `HF_TOKEN` from the environment natively; this function bridges
 /// the gap by passing it to `ApiBuilder::with_token`.
 ///
 /// Cache location: `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
-pub fn ensure_model_dir() -> Result<PathBuf, TtsError> {
+pub fn ensure_model_dir(precision: super::ModelPrecision) -> Result<PathBuf, TtsError> {
     if let Ok(dir) = std::env::var("WAVEKAT_MODEL_DIR") {
         return Ok(PathBuf::from(dir));
     }
@@ -86,21 +101,26 @@ pub fn ensure_model_dir() -> Result<PathBuf, TtsError> {
         REVISION.to_string(),
     ));
 
-    let total = MODEL_FILES.len();
-    eprintln!("Ensuring Qwen3-TTS 1.7B model ({total} files from {REPO_ID})...");
+    let onnx_files = match precision {
+        super::ModelPrecision::Int4 => ONNX_FILES_INT4,
+        super::ModelPrecision::Fp32 => ONNX_FILES_FP32,
+    };
+    let total = 1 + onnx_files.len() + SHARED_FILES[1..].len(); // config + onnx + shared (excl. config)
 
-    // config.json is always first — its parent is the snapshot root.
-    eprintln!("[1/{total}] {}", MODEL_FILES[0]);
+    eprintln!("Ensuring Qwen3-TTS 1.7B ({}) model ({total} files from {REPO_ID})...", precision.subdir());
+
+    // config.json first — its parent is the snapshot root.
+    eprintln!("[1/{total}] {}", SHARED_FILES[0]);
     let config_path = repo
-        .get(MODEL_FILES[0])
-        .map_err(|e| TtsError::Model(format!("failed to download {}: {e}", MODEL_FILES[0])))?;
+        .get(SHARED_FILES[0])
+        .map_err(|e| TtsError::Model(format!("failed to download {}: {e}", SHARED_FILES[0])))?;
 
     let model_dir = config_path
         .parent()
         .ok_or_else(|| TtsError::Model("unexpected cache path for config.json".into()))?
         .to_path_buf();
 
-    for (i, filename) in MODEL_FILES[1..].iter().enumerate() {
+    for (i, filename) in onnx_files.iter().chain(SHARED_FILES[1..].iter()).enumerate() {
         eprintln!("[{}/{total}] {filename}", i + 2);
         repo.get(filename)
             .map_err(|e| TtsError::Model(format!("failed to download {filename}: {e}")))?;

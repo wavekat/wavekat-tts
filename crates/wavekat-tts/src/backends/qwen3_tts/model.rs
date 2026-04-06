@@ -74,11 +74,11 @@ impl Model {
     /// Load all ONNX sessions and embedding tables from `model_dir`.
     ///
     /// Expected layout (matches the HF repo):
-    /// - `model_dir/int4/talker_prefill.onnx` (+ .data), etc.
+    /// - `model_dir/{int4,fp32}/talker_prefill.onnx` (+ .data), etc.
     /// - `model_dir/embeddings/text_embedding.npy`, etc.
-    pub fn load(model_dir: &Path) -> Result<Self, TtsError> {
+    pub fn load(model_dir: &Path, precision: super::ModelPrecision) -> Result<Self, TtsError> {
         let load_session = |name: &str| -> Result<Session, TtsError> {
-            let path = model_dir.join("int4").join(name);
+            let path = model_dir.join(precision.subdir()).join(name);
             Session::builder()
                 .map_err(|e| TtsError::Model(format!("session builder error: {e}")))?
                 .commit_from_file(&path)
