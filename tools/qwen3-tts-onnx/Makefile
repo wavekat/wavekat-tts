@@ -22,7 +22,7 @@ help: ## Show this help
 
 venv: ## Create virtualenv and install dependencies
 	python3 -m venv .venv
-	.venv/bin/pip install -r requirements.txt
+	$(PYTHON) -m pip install -r requirements.txt
 
 all: venv export validate quantize hf ## Export, validate, quantize, package for HF
 
