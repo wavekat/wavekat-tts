@@ -1,0 +1,99 @@
+name: Export ONNX & Publish to HuggingFace
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_id:
+        description: "HuggingFace source model"
+        default: "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        type: string
+      hf_repo:
+        description: "Target HuggingFace repo (org/name)"
+        default: "wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX"
+        type: string
+      runner:
+        description: "GitHub Actions runner label"
+        default: "ubuntu-latest"
+        type: string
+      skip_validation:
+        description: "Skip PyTorch vs ONNX validation"
+        default: false
+        type: boolean
+
+jobs:
+  export-and-publish:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+
+    steps:
+      - name: Free disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /usr/local/graalvm \
+            /usr/local/share/chromium \
+            /usr/local/lib/node_modules \
+            /usr/share/swift \
+            /opt/hostedtoolcache
+          sudo apt-get clean
+          echo "=== After cleanup ==="
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: tools/qwen3-tts-onnx
+        run: make venv
+
+      - name: Export FP32 ONNX models
+        working-directory: tools/qwen3-tts-onnx
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          make export MODEL_ID="${{ inputs.model_id }}"
+          echo "=== Disk after export ==="
+          df -h /
+
+      - name: Validate exports against PyTorch
+        if: ${{ !inputs.skip_validation }}
+        working-directory: tools/qwen3-tts-onnx
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: make validate MODEL_ID="${{ inputs.model_id }}"
+
+      - name: Free PyTorch model cache
+        run: |
+          rm -rf ~/.cache/huggingface/hub
+          echo "=== Disk after cache cleanup ==="
+          df -h /
+
+      - name: Quantize to INT4
+        working-directory: tools/qwen3-tts-onnx
+        run: |
+          make quantize
+          echo "=== Disk after quantize ==="
+          df -h /
+
+      - name: Package for HuggingFace
+        working-directory: tools/qwen3-tts-onnx
+        run: make hf
+
+      - name: Upload to HuggingFace
+        working-directory: tools/qwen3-tts-onnx
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          .venv/bin/pip install -q huggingface_hub
+          .venv/bin/huggingface-cli upload \
+            "${{ inputs.hf_repo }}" \
+            ./output/qwen3-tts-1.7b-voicedesign/ \
+            --repo-type model
