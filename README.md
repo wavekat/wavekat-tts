@@ -27,7 +27,6 @@ Same pattern as
 
 ```sh
 cargo add wavekat-tts --features qwen3-tts
-cargo add wavekat-core --features wav
 ```
 
 ```rust
