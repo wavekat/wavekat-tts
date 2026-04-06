@@ -2,9 +2,14 @@
 """Validate ONNX exports against PyTorch output for Qwen3-TTS.
 
 Runs per-stage comparisons and an end-to-end greedy decode test.
+
+Memory-efficient: generates all PyTorch reference outputs first, then unloads
+the model before loading ONNX sessions for comparison.  Peak memory stays under
+~7 GB (one model at a time) so validation runs on standard GitHub Actions runners.
 """
 
 import argparse
+import gc
 import json
 import os
 import sys
@@ -24,7 +29,6 @@ from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGenera
 
 def text_project_numpy(token_ids, text_embedding, fc1_w, fc1_b, fc2_w, fc2_b):
     """Replicate text_projection MLP (SiLU-gated) in NumPy."""
-    # token_ids: list of int
     embeds = text_embedding[token_ids]  # (T, text_hidden)
     hidden = embeds @ fc1_w.T + fc1_b  # (T, intermediate)
     activated = hidden * (1.0 / (1.0 + np.exp(-hidden)))  # SiLU
@@ -69,8 +73,34 @@ def load_config(output_dir):
         return json.load(f)
 
 
+def _extract_model_cfg(model):
+    """Extract all config scalars needed for ONNX-only inference."""
+    tc = model.config.talker_config
+    cc = tc.code_predictor_config
+    return {
+        "num_hidden_layers": tc.num_hidden_layers,
+        "num_key_value_heads": tc.num_key_value_heads,
+        "head_dim": tc.head_dim,
+        "hidden_size": tc.hidden_size,
+        "num_code_groups": tc.num_code_groups,
+        "cp_num_hidden_layers": cc.num_hidden_layers,
+        "cp_num_key_value_heads": cc.num_key_value_heads,
+        "cp_head_dim": cc.head_dim,
+        "codec_language_id": dict(tc.codec_language_id) if tc.codec_language_id else {},
+        "codec_think_id": tc.codec_think_id,
+        "codec_think_bos_id": tc.codec_think_bos_id,
+        "codec_think_eos_id": tc.codec_think_eos_id,
+        "codec_nothink_id": tc.codec_nothink_id,
+        "spk_id": dict(tc.spk_id) if tc.spk_id else {},
+        "codec_pad_id": tc.codec_pad_id,
+        "codec_bos_id": tc.codec_bos_id,
+        "codec_eos_token_id": tc.codec_eos_token_id,
+        "vocab_size": tc.vocab_size,
+    }
+
+
 # ---------------------------------------------------------------------------
-# Stage 1: Embeddings
+# Stage 1: Embeddings (no ONNX — runs entirely during PyTorch phase)
 # ---------------------------------------------------------------------------
 
 def validate_embeddings(model, output_dir):
@@ -109,13 +139,12 @@ def validate_embeddings(model, output_dir):
 # Stage 2: Talker Prefill
 # ---------------------------------------------------------------------------
 
-def validate_talker_prefill(model, output_dir):
-    """Compare talker prefill: PyTorch vs ONNX."""
-    print("\n=== Stage 2: Talker Prefill Validation ===")
+def pytorch_talker_prefill(model):
+    """Run PyTorch talker prefill and return reference data."""
+    print("\n  Stage 2: generating PyTorch reference (talker prefill)...")
     cfg = model.config.talker_config
     hidden_size = cfg.hidden_size
 
-    # Build a simple inputs_embeds
     T = 8
     torch.manual_seed(42)
     inputs_embeds = torch.randn(1, T, hidden_size)
@@ -134,24 +163,34 @@ def validate_talker_prefill(model, output_dir):
         pt_hidden = pt_out.last_hidden_state.numpy()
         pt_logits = model.talker.codec_head(pt_out.last_hidden_state).numpy()
 
-    # ONNX
-    onnx_path = os.path.join(output_dir, "talker_prefill.onnx")
+    return {
+        "pt_logits": pt_logits,
+        "pt_hidden": pt_hidden,
+        "inputs_embeds": inputs_embeds.numpy(),
+        "attention_mask": attention_mask.numpy(),
+        "position_ids": position_ids.numpy(),
+    }
+
+
+def compare_talker_prefill(refs, onnx_dir):
+    """Compare talker prefill: saved PyTorch refs vs ONNX."""
+    print("\n=== Stage 2: Talker Prefill Validation ===")
+    onnx_path = os.path.join(onnx_dir, "talker_prefill.onnx")
     if not os.path.exists(onnx_path):
         print("  SKIP: talker_prefill.onnx not found")
         return True
 
     sess = ort.InferenceSession(onnx_path)
     ort_out = sess.run(None, {
-        "inputs_embeds": inputs_embeds.numpy(),
-        "attention_mask": attention_mask.numpy(),
-        "position_ids": position_ids.numpy(),
+        "inputs_embeds": refs["inputs_embeds"],
+        "attention_mask": refs["attention_mask"],
+        "position_ids": refs["position_ids"],
     })
+    del sess
+    gc.collect()
 
-    ort_logits = ort_out[0]
-    ort_hidden = ort_out[1]
-
-    logits_err = np.max(np.abs(pt_logits - ort_logits))
-    hidden_err = np.max(np.abs(pt_hidden - ort_hidden))
+    logits_err = np.max(np.abs(refs["pt_logits"] - ort_out[0]))
+    hidden_err = np.max(np.abs(refs["pt_hidden"] - ort_out[1]))
     print(f"  Logits max_err={logits_err:.6e}")
     print(f"  Hidden max_err={hidden_err:.6e}")
     ok = logits_err < 1e-3 and hidden_err < 1e-3
@@ -163,9 +202,9 @@ def validate_talker_prefill(model, output_dir):
 # Stage 3: Talker Decode
 # ---------------------------------------------------------------------------
 
-def validate_talker_decode(model, output_dir):
-    """Compare single-step talker decode: PyTorch vs ONNX."""
-    print("\n=== Stage 3: Talker Decode Validation ===")
+def pytorch_talker_decode(model):
+    """Run PyTorch talker decode and return reference data."""
+    print("  Stage 3: generating PyTorch reference (talker decode)...")
     from transformers.cache_utils import DynamicCache
 
     cfg = model.config.talker_config
@@ -212,23 +251,38 @@ def validate_talker_decode(model, output_dir):
         pt_logits = model.talker.codec_head(pt_decode.last_hidden_state).numpy()
         pt_hidden = pt_decode.last_hidden_state.numpy()
 
-    # ONNX
-    onnx_path = os.path.join(output_dir, "talker_decode.onnx")
+    return {
+        "pt_logits": pt_logits,
+        "pt_hidden": pt_hidden,
+        "decode_embeds": decode_embeds.numpy(),
+        "decode_mask": decode_mask.numpy(),
+        "decode_pos": decode_pos.numpy(),
+        "past_keys": past_keys_np,
+        "past_values": past_values_np,
+    }
+
+
+def compare_talker_decode(refs, onnx_dir):
+    """Compare single-step talker decode: saved PyTorch refs vs ONNX."""
+    print("\n=== Stage 3: Talker Decode Validation ===")
+    onnx_path = os.path.join(onnx_dir, "talker_decode.onnx")
     if not os.path.exists(onnx_path):
         print("  SKIP: talker_decode.onnx not found")
         return True
 
     sess = ort.InferenceSession(onnx_path)
     ort_out = sess.run(None, {
-        "inputs_embeds": decode_embeds.numpy(),
-        "attention_mask": decode_mask.numpy(),
-        "position_ids": decode_pos.numpy(),
-        "past_keys": past_keys_np,
-        "past_values": past_values_np,
+        "inputs_embeds": refs["decode_embeds"],
+        "attention_mask": refs["decode_mask"],
+        "position_ids": refs["decode_pos"],
+        "past_keys": refs["past_keys"],
+        "past_values": refs["past_values"],
     })
+    del sess
+    gc.collect()
 
-    logits_err = np.max(np.abs(pt_logits - ort_out[0]))
-    hidden_err = np.max(np.abs(pt_hidden - ort_out[1]))
+    logits_err = np.max(np.abs(refs["pt_logits"] - ort_out[0]))
+    hidden_err = np.max(np.abs(refs["pt_hidden"] - ort_out[1]))
     print(f"  Logits max_err={logits_err:.6e}")
     print(f"  Hidden max_err={hidden_err:.6e}")
     ok = logits_err < 1e-3 and hidden_err < 1e-3
@@ -240,10 +294,9 @@ def validate_talker_decode(model, output_dir):
 # Stage 4: Code Predictor
 # ---------------------------------------------------------------------------
 
-def validate_code_predictor(model, output_dir):
-    """Compare code predictor: PyTorch vs ONNX for a single group prediction."""
-    print("\n=== Stage 4: Code Predictor Validation ===")
-
+def pytorch_code_predictor(model):
+    """Run PyTorch code predictor and return reference data."""
+    print("  Stage 4: generating PyTorch reference (code predictor)...")
     cfg = model.config.talker_config
     cp_cfg = cfg.code_predictor_config
     talker_hidden = cfg.hidden_size
@@ -264,27 +317,42 @@ def validate_code_predictor(model, output_dir):
             cache_position=torch.arange(2),
         )
         pt_hidden = cp_out.last_hidden_state
-        pt_logits = cp.lm_head[0](pt_hidden).numpy()  # group 0 → lm_head[0]
+        pt_logits = cp.lm_head[0](pt_hidden).numpy()  # group 0 -> lm_head[0]
 
-    # ONNX
-    onnx_path = os.path.join(output_dir, "code_predictor.onnx")
+    return {
+        "pt_logits": pt_logits,
+        "inputs_embeds": inputs_embeds.numpy(),
+        "cp_num_layers": cp_cfg.num_hidden_layers,
+        "cp_num_kv_heads": cp_cfg.num_key_value_heads,
+        "cp_head_dim": cp_cfg.head_dim,
+    }
+
+
+def compare_code_predictor(refs, onnx_dir):
+    """Compare code predictor: saved PyTorch refs vs ONNX."""
+    print("\n=== Stage 4: Code Predictor Validation ===")
+    onnx_path = os.path.join(onnx_dir, "code_predictor.onnx")
     if not os.path.exists(onnx_path):
         print("  SKIP: code_predictor.onnx not found")
         return True
 
     sess = ort.InferenceSession(onnx_path)
-    cp_num_layers = cp_cfg.num_hidden_layers
-    cp_num_kv_heads = cp_cfg.num_key_value_heads
-    cp_head_dim = cp_cfg.head_dim
-
     ort_out = sess.run(None, {
-        "inputs_embeds": inputs_embeds.numpy(),
+        "inputs_embeds": refs["inputs_embeds"],
         "generation_steps": np.array([0], dtype=np.int64),
-        "past_keys": np.zeros((cp_num_layers, 1, cp_num_kv_heads, 0, cp_head_dim), dtype=np.float32),
-        "past_values": np.zeros((cp_num_layers, 1, cp_num_kv_heads, 0, cp_head_dim), dtype=np.float32),
+        "past_keys": np.zeros(
+            (refs["cp_num_layers"], 1, refs["cp_num_kv_heads"], 0, refs["cp_head_dim"]),
+            dtype=np.float32,
+        ),
+        "past_values": np.zeros(
+            (refs["cp_num_layers"], 1, refs["cp_num_kv_heads"], 0, refs["cp_head_dim"]),
+            dtype=np.float32,
+        ),
     })
+    del sess
+    gc.collect()
 
-    logits_err = np.max(np.abs(pt_logits - ort_out[0]))
+    logits_err = np.max(np.abs(refs["pt_logits"] - ort_out[0]))
     print(f"  Logits max_err={logits_err:.6e}, shape={ort_out[0].shape}")
     ok = logits_err < 1e-3
     print(f"  {'PASS' if ok else 'FAIL'}")
@@ -295,23 +363,14 @@ def validate_code_predictor(model, output_dir):
 # Stage 5: Vocoder
 # ---------------------------------------------------------------------------
 
-def validate_vocoder(model, output_dir):
-    """Compare vocoder: PyTorch vs ONNX at multiple sequence lengths."""
-    print("\n=== Stage 5: Vocoder Validation ===")
-
+def pytorch_vocoder(model):
+    """Run PyTorch vocoder and return reference data."""
+    print("  Stage 5: generating PyTorch reference (vocoder)...")
     speech_tokenizer = model.speech_tokenizer
     decoder = speech_tokenizer.model.decoder
     num_q = decoder.config.num_quantizers
 
-    onnx_path = os.path.join(output_dir, "vocoder.onnx")
-    if not os.path.exists(onnx_path):
-        print("  SKIP: vocoder.onnx not found")
-        return True
-
-    sess = ort.InferenceSession(onnx_path)
-    ok = True
-
-    # Test multiple T values to verify dynamic sequence length works
+    test_cases = []
     for T in [50, 150, 299]:
         torch.manual_seed(42 + T)
         codes = torch.randint(0, 2048, (1, num_q, T), dtype=torch.int64)
@@ -319,7 +378,31 @@ def validate_vocoder(model, output_dir):
         with torch.no_grad():
             pt_wav = decoder(codes).cpu().numpy()
 
-        ort_out = sess.run(None, {"codes": codes.numpy()})
+        test_cases.append({
+            "T": T,
+            "codes": codes.numpy(),
+            "pt_wav": pt_wav,
+        })
+
+    return {"test_cases": test_cases}
+
+
+def compare_vocoder(refs, onnx_dir):
+    """Compare vocoder: saved PyTorch refs vs ONNX at multiple sequence lengths."""
+    print("\n=== Stage 5: Vocoder Validation ===")
+    onnx_path = os.path.join(onnx_dir, "vocoder.onnx")
+    if not os.path.exists(onnx_path):
+        print("  SKIP: vocoder.onnx not found")
+        return True
+
+    sess = ort.InferenceSession(onnx_path)
+    ok = True
+
+    for tc in refs["test_cases"]:
+        T = tc["T"]
+        pt_wav = tc["pt_wav"]
+
+        ort_out = sess.run(None, {"codes": tc["codes"]})
         ort_wav = ort_out[0]
 
         max_err = np.max(np.abs(pt_wav - ort_wav))
@@ -335,6 +418,9 @@ def validate_vocoder(model, output_dir):
               f"shape={ort_wav.shape} {'PASS' if t_ok else 'FAIL'}")
         ok = ok and t_ok
 
+    del sess
+    gc.collect()
+
     print(f"  {'PASS' if ok else 'FAIL'}")
     return ok
 
@@ -343,34 +429,15 @@ def validate_vocoder(model, output_dir):
 # Stage 6: End-to-end greedy decode
 # ---------------------------------------------------------------------------
 
-def validate_end_to_end(model, root_dir, onnx_dir):
-    """End-to-end: PyTorch greedy decode vs ONNX greedy decode on same text."""
-    print("\n=== Stage 6: End-to-End Validation ===")
-
-    config = load_config(root_dir)
-    emb = load_embeddings(root_dir)
+def pytorch_end_to_end(model, root_dir):
+    """Run PyTorch end-to-end inference and return reference data."""
+    print("  Stage 6: generating PyTorch reference (end-to-end)...")
     talker_cfg = model.config.talker_config
-    cp_cfg = talker_cfg.code_predictor_config
 
-    # Load all ONNX sessions (including vocoder for full ONNX-only audio)
-    required_files = ["talker_prefill.onnx", "talker_decode.onnx",
-                      "code_predictor.onnx", "vocoder.onnx"]
-    for f in required_files:
-        if not os.path.exists(os.path.join(onnx_dir, f)):
-            print(f"  SKIP: {f} not found")
-            return True
-
-    prefill_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_prefill.onnx"))
-    decode_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_decode.onnx"))
-    cp_sess = ort.InferenceSession(os.path.join(onnx_dir, "code_predictor.onnx"))
-    vocoder_sess = ort.InferenceSession(os.path.join(onnx_dir, "vocoder.onnx"))
-
-    # ---- Run PyTorch inference ----
     test_text = ("The sun rose slowly over the mountains, casting long golden shadows "
                  "across the valley below. Birds began to sing in the tall pine trees, "
                  "and a gentle breeze carried the scent of wildflowers through the crisp morning air.")
     language = "english"
-    # Use first preset speaker if available, else None (VoiceDesign model)
     if talker_cfg.spk_id:
         speaker = list(talker_cfg.spk_id.keys())[0]
     else:
@@ -380,20 +447,18 @@ def validate_end_to_end(model, root_dir, onnx_dir):
     tokenizer = AutoTokenizer.from_pretrained(
         os.path.join(root_dir, "tokenizer")
     )
-
-    # Format text as chat template (matches official format)
     chat_text = f"<|im_start|>assistant\n{test_text}<|im_end|>\n<|im_start|>assistant\n"
     input_ids = tokenizer.encode(chat_text, add_special_tokens=False)
     input_ids_tensor = torch.tensor([input_ids], dtype=torch.int64)
 
     max_frames = 300
 
+    # Greedy decode (deterministic — for ONNX comparison)
     with torch.no_grad():
-        # Greedy decode with non_streaming_mode=True to match ONNX side
         pt_codes, pt_hidden = model.generate(
             input_ids=[input_ids_tensor],
             languages=[language],
-            speakers=[speaker],  # None for VoiceDesign, speaker name for preset
+            speakers=[speaker],
             non_streaming_mode=True,
             max_new_tokens=max_frames,
             do_sample=False,
@@ -406,15 +471,65 @@ def validate_end_to_end(model, root_dir, onnx_dir):
             subtalker_temperature=1.0,
             repetition_penalty=1.0,
         )
-    pt_codes_arr = pt_codes[0].cpu().numpy()  # (num_steps, num_code_groups)
-    print(f"  PyTorch generated {pt_codes_arr.shape[0]} frames")
+    pt_codes_arr = pt_codes[0].cpu().numpy()
+    print(f"  PyTorch greedy: {pt_codes_arr.shape[0]} frames")
 
-    # ---- Run ONNX inference (same greedy decode) ----
+    # Sampled decode (for clean listening sample)
+    print("  Generating clean audio sample (native sampling config)...")
+    with torch.no_grad():
+        sample_codes, _ = model.generate(
+            input_ids=[input_ids_tensor],
+            languages=[language],
+            speakers=[speaker],
+            non_streaming_mode=True,
+            max_new_tokens=max_frames,
+            do_sample=True,
+            top_k=50,
+            top_p=1.0,
+            temperature=0.9,
+            subtalker_dosample=True,
+            subtalker_top_k=50,
+            subtalker_top_p=1.0,
+            subtalker_temperature=0.9,
+            repetition_penalty=1.05,
+        )
+    sample_codes_arr = sample_codes[0].cpu().numpy()
+    print(f"  PyTorch sampled: {sample_codes_arr.shape[0]} frames")
+
+    return {
+        "pt_codes_arr": pt_codes_arr,
+        "sample_codes_arr": sample_codes_arr,
+        "model_cfg": _extract_model_cfg(model),
+        "test_text": test_text,
+        "language": language,
+        "speaker": speaker,
+        "input_ids": input_ids,
+        "max_frames": max_frames,
+    }
+
+
+def compare_end_to_end(refs, root_dir, onnx_dir):
+    """Compare end-to-end: saved PyTorch refs vs ONNX greedy decode."""
+    print("\n=== Stage 6: End-to-End Validation ===")
+
+    config = load_config(root_dir)
+    emb = load_embeddings(root_dir)
+
+    required_files = ["talker_prefill.onnx", "talker_decode.onnx",
+                      "code_predictor.onnx", "vocoder.onnx"]
+    for f in required_files:
+        if not os.path.exists(os.path.join(onnx_dir, f)):
+            print(f"  SKIP: {f} not found")
+            return True
+
+    pt_codes_arr = refs["pt_codes_arr"]
+
+    # Run ONNX greedy decode (manages sessions internally for memory)
     onnx_codes = _onnx_greedy_decode(
-        model, config, emb,
-        input_ids, language, speaker,
-        prefill_sess, decode_sess, cp_sess,
-        max_steps=max_frames,
+        refs["model_cfg"], config, emb,
+        refs["input_ids"], refs["language"], refs["speaker"],
+        onnx_dir,
+        max_steps=refs["max_frames"],
         repetition_penalty=1.0,
     )
     print(f"  ONNX generated {len(onnx_codes)} frames")
@@ -448,9 +563,12 @@ def validate_end_to_end(model, root_dir, onnx_dir):
         print(f"  Codes match perfectly ({min_len} frames, "
               f"len_match={'yes' if len_match else 'no (%d vs %d)' % (len(onnx_codes), pt_codes_arr.shape[0])})")
 
-    # Decode to audio — use ONNX vocoder (dynamic T) for full ONNX-only validation
+    # Decode to audio using ONNX vocoder (loaded separately to save memory)
     wav_dir = os.path.join(root_dir, "validation")
     os.makedirs(wav_dir, exist_ok=True)
+
+    vocoder_sess = ort.InferenceSession(os.path.join(onnx_dir, "vocoder.onnx"))
+
     if min_len > 0:
         pt_vocoder_input = pt_codes_trimmed.T[np.newaxis, :, :].astype(np.int64)
         onnx_vocoder_input = onnx_codes_arr.T[np.newaxis, :, :].astype(np.int64)
@@ -464,7 +582,7 @@ def validate_end_to_end(model, root_dir, onnx_dir):
 
         if code_match:
             wav_err = np.max(np.abs(pt_wav - onnx_wav))
-            print(f"  Audio max_err={wav_err:.6e} (same codes → identical audio)")
+            print(f"  Audio max_err={wav_err:.6e} (same codes -> identical audio)")
         else:
             signal_power = np.mean(pt_wav ** 2)
             noise_power = np.mean((pt_wav - onnx_wav) ** 2)
@@ -479,54 +597,39 @@ def validate_end_to_end(model, root_dir, onnx_dir):
         print(f"  Length diff={len_diff} (EOS boundary sensitivity)")
     print(f"  {'PASS' if ok else 'FAIL'}")
 
-    # Generate a clean listening sample with the model's native sampling config
-    # (do_sample=True, temp=0.9, rep_penalty=1.05 — stops cleanly at EOS)
-    print("\n  Generating clean audio sample (native sampling config)...")
-    with torch.no_grad():
-        sample_codes, _ = model.generate(
-            input_ids=[input_ids_tensor],
-            languages=[language],
-            speakers=[speaker],
-            non_streaming_mode=True,
-            max_new_tokens=max_frames,
-            do_sample=True,
-            top_k=50,
-            top_p=1.0,
-            temperature=0.9,
-            subtalker_dosample=True,
-            subtalker_top_k=50,
-            subtalker_top_p=1.0,
-            subtalker_temperature=0.9,
-            repetition_penalty=1.05,
-        )
-    sample_arr = sample_codes[0].cpu().numpy()
-    # Use ONNX vocoder for the sample too — full ONNX pipeline
-    sample_input = sample_arr.T[np.newaxis, :, :].astype(np.int64)
+    # Decode the clean sample with ONNX vocoder
+    sample_codes_arr = refs["sample_codes_arr"]
+    sample_input = sample_codes_arr.T[np.newaxis, :, :].astype(np.int64)
     sample_wav = vocoder_sess.run(None, {"codes": sample_input})[0].flatten()
     sf.write(os.path.join(wav_dir, "sample.wav"), sample_wav, 24000)
-    print(f"  Saved sample.wav ({len(sample_wav)/24000:.1f}s, {sample_arr.shape[0]} frames)")
+    print(f"  Saved sample.wav ({len(sample_wav)/24000:.1f}s, {sample_codes_arr.shape[0]} frames)")
+
+    del vocoder_sess
+    gc.collect()
 
     return ok
 
 
 def _onnx_greedy_decode(
-    model, config, emb,
+    model_cfg, config, emb,
     input_ids, language, speaker,
-    prefill_sess, decode_sess, cp_sess,
+    onnx_dir,
     max_steps=20,
     repetition_penalty=1.0,
 ):
-    """Run ONNX-based greedy decode, replicating the official inference flow."""
-    talker_cfg = model.config.talker_config
-    cp_cfg = talker_cfg.code_predictor_config
-    num_layers = talker_cfg.num_hidden_layers
-    num_kv_heads = talker_cfg.num_key_value_heads
-    head_dim = talker_cfg.head_dim
-    hidden_size = talker_cfg.hidden_size
-    num_code_groups = talker_cfg.num_code_groups
-    cp_num_layers = cp_cfg.num_hidden_layers
-    cp_num_kv_heads = cp_cfg.num_key_value_heads
-    cp_head_dim = cp_cfg.head_dim
+    """Run ONNX-based greedy decode, replicating the official inference flow.
+
+    Loads ONNX sessions sequentially to keep peak memory low:
+    prefill session -> unload -> decode + CP sessions -> unload.
+    """
+    num_layers = model_cfg["num_hidden_layers"]
+    num_kv_heads = model_cfg["num_key_value_heads"]
+    head_dim = model_cfg["head_dim"]
+    hidden_size = model_cfg["hidden_size"]
+    num_code_groups = model_cfg["num_code_groups"]
+    cp_num_layers = model_cfg["cp_num_hidden_layers"]
+    cp_num_kv_heads = model_cfg["cp_num_key_value_heads"]
+    cp_head_dim = model_cfg["cp_head_dim"]
 
     text_emb = emb["text_embedding"]
     fc1_w = emb["text_projection_fc1_weight"]
@@ -540,119 +643,110 @@ def _onnx_greedy_decode(
         return text_project_numpy(token_ids, text_emb, fc1_w, fc1_b, fc2_w, fc2_b)
 
     # Build prefill embeddings
-    # input_ids = [im_start, assistant, \n, text..., im_end, \n, im_start, assistant, \n]
-    # Role prefix: first 3 tokens
-    role_embed = text_proj(input_ids[:3])  # (3, hidden)
+    role_embed = text_proj(input_ids[:3])
 
-    # Codec prefix
-    language_id = talker_cfg.codec_language_id.get(language.lower())
+    language_id = model_cfg["codec_language_id"].get(language.lower())
     if language_id is not None:
         codec_prefix_ids = [
-            talker_cfg.codec_think_id,
-            talker_cfg.codec_think_bos_id,
+            model_cfg["codec_think_id"],
+            model_cfg["codec_think_bos_id"],
             language_id,
-            talker_cfg.codec_think_eos_id,
+            model_cfg["codec_think_eos_id"],
         ]
     else:
         codec_prefix_ids = [
-            talker_cfg.codec_nothink_id,
-            talker_cfg.codec_think_bos_id,
-            talker_cfg.codec_think_eos_id,
+            model_cfg["codec_nothink_id"],
+            model_cfg["codec_think_bos_id"],
+            model_cfg["codec_think_eos_id"],
         ]
 
-    # Speaker embed (if available)
     speaker_embed = None
     if speaker is not None and speaker != "":
-        spk_id_tokens = talker_cfg.spk_id[speaker.lower()]
-        speaker_embed = codec_emb[spk_id_tokens]  # (num_spk_tokens, hidden) or single
+        spk_id_tokens = model_cfg["spk_id"][speaker.lower()]
+        speaker_embed = codec_emb[spk_id_tokens]
         if len(speaker_embed.shape) == 1:
             speaker_embed = speaker_embed.reshape(1, -1)
 
-    # tts_pad, tts_bos, tts_eos embeddings
-    tts_pad_embed = text_proj([config["tts_pad_token_id"]])[0]  # (hidden,)
+    tts_pad_embed = text_proj([config["tts_pad_token_id"]])[0]
     tts_bos_embed = text_proj([config["tts_bos_token_id"]])[0]
     tts_eos_embed = text_proj([config["tts_eos_token_id"]])[0]
 
-    codec_pad_embed = codec_emb[talker_cfg.codec_pad_id]
-    codec_bos_embed = codec_emb[talker_cfg.codec_bos_id]
+    codec_pad_embed = codec_emb[model_cfg["codec_pad_id"]]
+    codec_bos_embed = codec_emb[model_cfg["codec_bos_id"]]
 
-    # Build the prefill sequence (non-streaming mode):
-    # [role(3)] [tts_pad+codec_prefix] [tts_pad+speaker?] [tts_bos+codec_pad]
-    # [text_proj(text_tokens)+codec_pad ...] [tts_eos+codec_pad] [tts_pad+codec_bos]
+    # Build the prefill sequence (non-streaming mode)
     embeds_list = []
 
-    # Role: text projection only (no codec embedding)
-    embeds_list.append(role_embed)  # (3, hidden)
+    # Role: text projection only
+    embeds_list.append(role_embed)
 
-    # Codec prefix: tts_pad_embed + codec_embed for each
+    # Codec prefix
     for cid in codec_prefix_ids:
         embeds_list.append((tts_pad_embed + codec_emb[cid]).reshape(1, -1))
 
-    # Speaker (only if preset speaker available)
+    # Speaker
     if speaker_embed is not None:
         embeds_list.append((tts_pad_embed + speaker_embed.sum(axis=0)).reshape(1, -1))
 
     # Transition: tts_bos + codec_pad
     embeds_list.append((tts_bos_embed + codec_pad_embed).reshape(1, -1))
 
-    # Non-streaming: all text tokens + tts_eos, each paired with codec_pad
-    text_tokens = input_ids[3:-5]  # text content (between role markers)
+    # Text tokens + tts_eos
+    text_tokens = input_ids[3:-5]
     for tid in text_tokens:
         embeds_list.append(
             (text_proj([tid])[0] + codec_pad_embed).reshape(1, -1)
         )
-    # tts_eos + codec_pad
     embeds_list.append((tts_eos_embed + codec_pad_embed).reshape(1, -1))
 
     # Final: tts_pad + codec_bos
     embeds_list.append((tts_pad_embed + codec_bos_embed).reshape(1, -1))
 
-    prefill_embeds = np.concatenate(embeds_list, axis=0)  # (T, hidden)
-    prefill_embeds = prefill_embeds[np.newaxis, :, :].astype(np.float32)  # (1, T, hidden)
+    prefill_embeds = np.concatenate(embeds_list, axis=0)
+    prefill_embeds = prefill_embeds[np.newaxis, :, :].astype(np.float32)
 
     T = prefill_embeds.shape[1]
     attention_mask = np.ones((1, T), dtype=np.int64)
-    position_ids = np.arange(T).reshape(1, 1, T).repeat(3, axis=0)  # (3, 1, T)
+    position_ids = np.arange(T).reshape(1, 1, T).repeat(3, axis=0)
 
-    # Run prefill
+    # --- Prefill phase: load session, run, unload ---
+    prefill_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_prefill.onnx"))
     prefill_out = prefill_sess.run(None, {
         "inputs_embeds": prefill_embeds,
         "attention_mask": attention_mask,
         "position_ids": position_ids,
     })
+    del prefill_sess
+    gc.collect()
 
-    logits = prefill_out[0]  # (1, T, vocab)
-    hidden_states = prefill_out[1]  # (1, T, hidden)
-    # Stack KV cache from per-layer outputs
+    logits = prefill_out[0]
+    hidden_states = prefill_out[1]
     kv_outputs = prefill_out[2:]
-    past_keys = np.stack([kv_outputs[i * 2] for i in range(num_layers)])  # (layers, 1, kv_heads, T, head_dim)
+    past_keys = np.stack([kv_outputs[i * 2] for i in range(num_layers)])
     past_values = np.stack([kv_outputs[i * 2 + 1] for i in range(num_layers)])
 
-    # Trailing text hidden (for non-streaming, it's just tts_pad_embed repeated)
     trailing_hidden = tts_pad_embed.reshape(1, -1)
 
-    # Decode loop
+    # --- Decode phase: load decode + CP sessions ---
+    decode_sess = ort.InferenceSession(os.path.join(onnx_dir, "talker_decode.onnx"))
+    cp_sess = ort.InferenceSession(os.path.join(onnx_dir, "code_predictor.onnx"))
+
     all_codes = []
     current_pos = T
-    codec_eos = talker_cfg.codec_eos_token_id
-    vocab_size = talker_cfg.vocab_size
+    codec_eos = model_cfg["codec_eos_token_id"]
+    vocab_size = model_cfg["vocab_size"]
 
-    # Suppress control tokens (same as official model: suppress range
-    # [vocab_size-1024, vocab_size) except codec_eos)
     suppress_mask = np.zeros(vocab_size, dtype=bool)
     suppress_mask[vocab_size - 1024:vocab_size] = True
     suppress_mask[codec_eos] = False
 
-    generated_tokens = []  # track group0 tokens for repetition penalty
+    generated_tokens = []
 
     for step in range(max_steps):
-        # Greedy: argmax on last position logits (with token suppression)
-        last_logits = logits[0, -1, :].copy()  # (vocab,)
+        last_logits = logits[0, -1, :].copy()
         last_logits[suppress_mask] = -np.inf
-        # Enforce min_new_tokens=2 (match official model)
         if step < 2:
             last_logits[codec_eos] = -np.inf
-        # Repetition penalty (same as HuggingFace RepetitionPenaltyLogitsProcessor)
         if repetition_penalty != 1.0 and generated_tokens:
             seen = np.array(generated_tokens)
             scores = last_logits[seen]
@@ -668,12 +762,11 @@ def _onnx_greedy_decode(
 
         # Run code predictor for groups 1-15
         frame_codes = [group0_token]
-        talker_hidden = hidden_states[0, -1:, :]  # (1, hidden)
-        group0_embed = codec_emb[group0_token].reshape(1, -1)  # (1, hidden)
+        talker_hidden = hidden_states[0, -1:, :]
+        group0_embed = codec_emb[group0_token].reshape(1, -1)
 
-        # CP initial input: [talker_hidden, group0_embed] in talker hidden space
-        cp_input = np.concatenate([talker_hidden, group0_embed], axis=0)  # (2, talker_hidden)
-        cp_input = cp_input[np.newaxis, :, :].astype(np.float32)  # (1, 2, talker_hidden)
+        cp_input = np.concatenate([talker_hidden, group0_embed], axis=0)
+        cp_input = cp_input[np.newaxis, :, :].astype(np.float32)
 
         cp_past_keys = np.zeros((cp_num_layers, 1, cp_num_kv_heads, 0, cp_head_dim), dtype=np.float32)
         cp_past_values = np.zeros((cp_num_layers, 1, cp_num_kv_heads, 0, cp_head_dim), dtype=np.float32)
@@ -686,30 +779,27 @@ def _onnx_greedy_decode(
                 "past_values": cp_past_values,
             })
 
-            cp_logits = cp_out[0]  # (1, S, vocab)
+            cp_logits = cp_out[0]
             cp_past_keys = cp_out[1]
             cp_past_values = cp_out[2]
 
-            # Greedy: argmax on last position
             token = int(np.argmax(cp_logits[0, -1, :]))
             frame_codes.append(token)
 
-            # Next CP input: codec embed for this group (in talker hidden space)
             cp_embed = cp_codec_embs[g][token].reshape(1, 1, -1).astype(np.float32)
             cp_input = cp_embed
 
         all_codes.append(frame_codes)
 
-        # Build next talker input: sum of all codec embeddings + trailing text
+        # Build next talker input
         next_embed = codec_emb[group0_token].copy()
         for g in range(num_code_groups - 1):
             next_embed = next_embed + cp_codec_embs[g][frame_codes[g + 1]]
         next_embed = next_embed + trailing_hidden[0]
         next_embed = next_embed.reshape(1, 1, -1).astype(np.float32)
 
-        # Decode step
         decode_mask = np.ones((1, current_pos + 1), dtype=np.int64)
-        decode_pos = np.array([[[current_pos]]]).repeat(3, axis=0)  # (3, 1, 1)
+        decode_pos = np.array([[[current_pos]]]).repeat(3, axis=0)
 
         decode_out = decode_sess.run(None, {
             "inputs_embeds": next_embed,
@@ -724,6 +814,9 @@ def _onnx_greedy_decode(
         past_keys = decode_out[2]
         past_values = decode_out[3]
         current_pos += 1
+
+    del decode_sess, cp_sess
+    gc.collect()
 
     return all_codes
 
@@ -742,30 +835,60 @@ def main():
 
     stages = set(int(s) for s in args.stages.split(","))
 
+    root_dir = args.onnx_dir
+    onnx_subdir = os.path.join(root_dir, args.variant)
+
+    results = {}
+    refs = {}
+
+    # ===================================================================
+    # Phase 1: Load PyTorch model, generate all reference outputs
+    # ===================================================================
     print(f"Loading PyTorch model: {args.model_id}")
     model = Qwen3TTSForConditionalGeneration.from_pretrained(
         args.model_id, dtype=torch.float32, attn_implementation="eager"
     )
     model.eval()
 
-    root_dir = args.onnx_dir
-    onnx_subdir = os.path.join(root_dir, args.variant)
-
-    results = {}
-
     if 1 in stages:
         results[1] = validate_embeddings(model, root_dir)
     if 2 in stages:
-        results[2] = validate_talker_prefill(model, onnx_subdir)
+        refs[2] = pytorch_talker_prefill(model)
     if 3 in stages:
-        results[3] = validate_talker_decode(model, onnx_subdir)
+        refs[3] = pytorch_talker_decode(model)
     if 4 in stages:
-        results[4] = validate_code_predictor(model, onnx_subdir)
+        refs[4] = pytorch_code_predictor(model)
     if 5 in stages:
-        results[5] = validate_vocoder(model, onnx_subdir)
+        refs[5] = pytorch_vocoder(model)
     if 6 in stages:
-        results[6] = validate_end_to_end(model, root_dir, onnx_subdir)
+        refs[6] = pytorch_end_to_end(model, root_dir)
 
+    # ===================================================================
+    # Unload PyTorch model — reclaim ~6.8 GB
+    # ===================================================================
+    print("\nUnloading PyTorch model to free memory...")
+    del model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # ===================================================================
+    # Phase 2: Load ONNX sessions one at a time, compare against refs
+    # ===================================================================
+    if 2 in stages:
+        results[2] = compare_talker_prefill(refs[2], onnx_subdir)
+    if 3 in stages:
+        results[3] = compare_talker_decode(refs[3], onnx_subdir)
+    if 4 in stages:
+        results[4] = compare_code_predictor(refs[4], onnx_subdir)
+    if 5 in stages:
+        results[5] = compare_vocoder(refs[5], onnx_subdir)
+    if 6 in stages:
+        results[6] = compare_end_to_end(refs[6], root_dir, onnx_subdir)
+
+    # ===================================================================
+    # Summary
+    # ===================================================================
     print("\n" + "=" * 50)
     print("VALIDATION SUMMARY")
     print("=" * 50)
