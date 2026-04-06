@@ -1,0 +1,38 @@
+[package]
+name = "wavekat-tts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Unified text-to-speech for voice pipelines with multiple backend support"
+keywords = ["tts", "speech", "audio", "voice", "text-to-speech"]
+categories = ["multimedia::audio"]
+
+[features]
+default = []
+
+# Local inference backends (all ONNX-based)
+qwen3-tts = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:npyz", "dep:rand", "dep:ureq"]
+cosyvoice = ["dep:ort", "dep:ndarray"]
+
+[dependencies]
+wavekat-core = "0.0.3"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Local inference (optional)
+ort = { version = "2.0.0-rc.12", optional = true }
+ndarray = { version = "0.17", optional = true }
+tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
+npyz = { version = "0.8", optional = true }
+rand = { version = "0.9", optional = true }
+ureq = { version = "2", optional = true }
+hound = { version = "3.5", optional = true }
+
+[dev-dependencies]
+hound = "3.5"
+
+[[example]]
+name = "synthesize"
+required-features = ["qwen3-tts", "hound"]

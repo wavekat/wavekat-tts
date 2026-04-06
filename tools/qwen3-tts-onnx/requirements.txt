@@ -1,0 +1,8 @@
+torch>=2.11.0
+transformers>=4.57.0
+qwen-tts>=0.1.1
+onnx>=1.21.0
+onnxscript>=0.2.0
+onnxruntime>=1.24.0
+numpy>=2.0
+soundfile>=0.13
