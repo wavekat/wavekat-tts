@@ -107,7 +107,10 @@ pub fn ensure_model_dir(precision: super::ModelPrecision) -> Result<PathBuf, Tts
     };
     let total = 1 + onnx_files.len() + SHARED_FILES[1..].len(); // config + onnx + shared (excl. config)
 
-    eprintln!("Ensuring Qwen3-TTS 1.7B ({}) model ({total} files from {REPO_ID})...", precision.subdir());
+    eprintln!(
+        "Ensuring Qwen3-TTS 1.7B ({}) model ({total} files from {REPO_ID})...",
+        precision.subdir()
+    );
 
     // config.json first — its parent is the snapshot root.
     eprintln!("[1/{total}] {}", SHARED_FILES[0]);
@@ -120,7 +123,11 @@ pub fn ensure_model_dir(precision: super::ModelPrecision) -> Result<PathBuf, Tts
         .ok_or_else(|| TtsError::Model("unexpected cache path for config.json".into()))?
         .to_path_buf();
 
-    for (i, filename) in onnx_files.iter().chain(SHARED_FILES[1..].iter()).enumerate() {
+    for (i, filename) in onnx_files
+        .iter()
+        .chain(SHARED_FILES[1..].iter())
+        .enumerate()
+    {
         eprintln!("[{}/{total}] {filename}", i + 2);
         repo.get(filename)
             .map_err(|e| TtsError::Model(format!("failed to download {filename}: {e}")))?;

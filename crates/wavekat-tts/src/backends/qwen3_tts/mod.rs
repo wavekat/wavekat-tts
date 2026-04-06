@@ -84,7 +84,10 @@ impl Qwen3Tts {
     /// - `int4/` or `fp32/` — ONNX models (`talker_prefill.onnx`, etc.)
     /// - `embeddings/` — `.npy` embedding tables
     /// - `tokenizer/` — `vocab.json`, `merges.txt`
-    pub fn from_dir(model_dir: impl AsRef<Path>, precision: ModelPrecision) -> Result<Self, TtsError> {
+    pub fn from_dir(
+        model_dir: impl AsRef<Path>,
+        precision: ModelPrecision,
+    ) -> Result<Self, TtsError> {
         let model_dir = model_dir.as_ref();
         let model = model::Model::load(model_dir, precision)?;
         let tokenizer = tokenizer::Tokenizer::new(model_dir)?;
