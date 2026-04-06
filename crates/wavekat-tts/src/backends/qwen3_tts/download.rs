@@ -67,21 +67,29 @@ const SHARED_FILES: &[&str] = &[
     "tokenizer/merges.txt",
 ];
 
-/// Resolve the local HF Hub snapshot directory for the Qwen3-TTS model,
-/// downloading any missing files as needed.
+/// Resolve the local directory for the Qwen3-TTS model files, downloading
+/// any missing files from HF Hub as needed.
 ///
-/// Set `WAVEKAT_MODEL_DIR` to skip HF Hub and load from a local directory
-/// that mirrors the repo layout (`int4/` or `fp32/`, `embeddings/`, `tokenizer/`).
+/// Resolution order:
+/// 1. `config.model_dir` (if set)
+/// 2. `WAVEKAT_MODEL_DIR` environment variable
+/// 3. Auto-download from HF Hub
 ///
 /// Authentication: set `HF_TOKEN` if the repo requires it.  hf-hub 0.5 does
 /// not read `HF_TOKEN` from the environment natively; this function bridges
 /// the gap by passing it to `ApiBuilder::with_token`.
 ///
 /// Cache location: `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
-pub fn ensure_model_dir(precision: super::ModelPrecision) -> Result<PathBuf, TtsError> {
+pub fn resolve_model_dir(config: &super::ModelConfig) -> Result<PathBuf, TtsError> {
+    if let Some(dir) = &config.model_dir {
+        return Ok(dir.clone());
+    }
+
     if let Ok(dir) = std::env::var("WAVEKAT_MODEL_DIR") {
         return Ok(PathBuf::from(dir));
     }
+
+    let precision = config.precision;
 
     // from_env() reads HF_HOME / HF_ENDPOINT.
     // Bridge HF_TOKEN which hf-hub doesn't read from the environment natively.

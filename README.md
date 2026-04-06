@@ -31,16 +31,20 @@ cargo add wavekat-tts --features qwen3-tts
 
 ```rust
 use wavekat_tts::{TtsBackend, SynthesizeRequest};
-use wavekat_tts::backends::qwen3_tts::{Qwen3Tts, ModelPrecision};
+use wavekat_tts::backends::qwen3_tts::{Qwen3Tts, ModelConfig, ModelPrecision, ExecutionProvider};
 
-// Auto-downloads INT4 model files on first run (default):
+// Auto-downloads INT4 model files on first run, runs on CPU (default):
 let tts = Qwen3Tts::new()?;
 
-// Or load FP32:
-// let tts = Qwen3Tts::new_with_precision(ModelPrecision::Fp32)?;
+// Or FP32 on CPU:
+// let tts = Qwen3Tts::from_config(ModelConfig::default().with_precision(ModelPrecision::Fp32))?;
 
-// Or load from an explicit directory:
-// let tts = Qwen3Tts::from_dir("models/qwen3-tts-1.7b", ModelPrecision::Int4)?;
+// Or INT4 from a local directory on CUDA:
+// let tts = Qwen3Tts::from_config(
+//     ModelConfig::default()
+//         .with_dir("models/qwen3-tts-1.7b")
+//         .with_execution_provider(ExecutionProvider::Cuda),
+// )?;
 
 let request = SynthesizeRequest::new("Hello, world")
     .with_instruction("Speak naturally and clearly.");

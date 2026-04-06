@@ -29,7 +29,7 @@
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
-use wavekat_tts::backends::qwen3_tts::{ModelPrecision, Qwen3Tts};
+use wavekat_tts::backends::qwen3_tts::{ModelConfig, ModelPrecision, Qwen3Tts};
 use wavekat_tts::{SynthesizeRequest, TtsBackend};
 
 const DEFAULT_INSTRUCTION: &str = "Speak naturally and clearly.";
@@ -100,10 +100,11 @@ fn main() {
     }
 
     eprintln!("Loading model ...");
-    let tts = match model_dir {
-        Some(dir) => Qwen3Tts::from_dir(dir, precision).expect("failed to load model"),
-        None => Qwen3Tts::new_with_precision(precision).expect("failed to load model"),
-    };
+    let mut config = ModelConfig::default().with_precision(precision);
+    if let Some(dir) = model_dir {
+        config = config.with_dir(dir);
+    }
+    let tts = Qwen3Tts::from_config(config).expect("failed to load model");
 
     if interactive {
         run_interactive(&tts, language, instruction.unwrap(), &output);
@@ -192,7 +193,7 @@ fn run_interactive(
         }
 
         count += 1;
-        let output = if *default_output == PathBuf::from("output.wav") {
+        let output = if default_output == std::path::Path::new("output.wav") {
             PathBuf::from(format!("output_{count:03}.wav"))
         } else {
             default_output.clone()
@@ -220,7 +221,7 @@ fn synthesize_one(
     let elapsed = start.elapsed();
 
     let duration = audio.duration_secs();
-    let rtf = elapsed.as_secs_f64() / duration as f64;
+    let rtf = elapsed.as_secs_f64() / duration;
 
     eprintln!(
         "Generated {} samples at {} Hz ({:.2}s) in {:.2}s (RTF: {:.2})",

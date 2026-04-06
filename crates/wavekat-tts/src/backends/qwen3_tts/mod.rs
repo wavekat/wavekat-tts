@@ -5,22 +5,26 @@
 //!
 //! ```ignore
 //! use wavekat_tts::{TtsBackend, SynthesizeRequest};
-//! use wavekat_tts::backends::qwen3_tts::{Qwen3Tts, ModelPrecision};
+//! use wavekat_tts::backends::qwen3_tts::{Qwen3Tts, ModelConfig, ModelPrecision, ExecutionProvider};
 //!
-//! // Auto-download INT4 model files via HF Hub (default):
+//! // Auto-download INT4 model files via HF Hub, run on CPU (default):
 //! let tts = Qwen3Tts::new()?;
 //!
-//! // Auto-download FP32 model files:
-//! let tts = Qwen3Tts::new_with_precision(ModelPrecision::Fp32)?;
+//! // Auto-download FP32, run on CPU:
+//! let tts = Qwen3Tts::from_config(ModelConfig::default().with_precision(ModelPrecision::Fp32))?;
 //!
-//! // Or load from an explicit directory (must mirror the HF repo layout):
-//! let tts = Qwen3Tts::from_dir("models/qwen3-tts-1.7b", ModelPrecision::Int4)?;
+//! // INT4 from a local directory, run on CUDA:
+//! let tts = Qwen3Tts::from_config(
+//!     ModelConfig::default()
+//!         .with_dir("models/qwen3-tts-1.7b")
+//!         .with_execution_provider(ExecutionProvider::Cuda),
+//! )?;
 //!
 //! let request = SynthesizeRequest::new("Hello, world");
 //! let audio = tts.synthesize(&request)?;
 //! ```
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use wavekat_core::AudioFrame;
 
@@ -36,6 +40,8 @@ mod sampler;
 mod tokenizer;
 
 /// ONNX model precision variant.
+///
+/// Selects which quantized model files to download and load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ModelPrecision {
     /// Weight-only INT4 quantized — smaller download, faster load. Default.
@@ -54,6 +60,77 @@ impl ModelPrecision {
     }
 }
 
+/// ONNX execution provider (inference hardware backend).
+///
+/// Selecting a provider that is unavailable at runtime causes an error at load
+/// time rather than silently falling back. Use [`ExecutionProvider::Cpu`] (the
+/// default) if you need guaranteed availability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExecutionProvider {
+    /// CPU inference via ONNX Runtime. Always available. Default.
+    #[default]
+    Cpu,
+    /// NVIDIA CUDA GPU inference. Requires an ORT build with CUDA support.
+    Cuda,
+    /// Apple CoreML (macOS / iOS). Requires an ORT build with CoreML support.
+    CoreMl,
+}
+
+/// Model loading configuration for [`Qwen3Tts`].
+///
+/// All fields default to sensible values: INT4 quantization, CPU inference,
+/// and auto-download from HF Hub.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// # use wavekat_tts::backends::qwen3_tts::{ModelConfig, ModelPrecision, ExecutionProvider};
+/// // INT4, CPU, auto-download (equivalent to ModelConfig::default())
+/// let config = ModelConfig::default();
+///
+/// // FP32 from a local directory
+/// let config = ModelConfig::default()
+///     .with_precision(ModelPrecision::Fp32)
+///     .with_dir("models/qwen3-tts-1.7b");
+///
+/// // INT4, CUDA, auto-download
+/// let config = ModelConfig::default()
+///     .with_execution_provider(ExecutionProvider::Cuda);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ModelConfig {
+    /// Weight quantization variant (determines which ONNX files to load).
+    pub precision: ModelPrecision,
+    /// Inference hardware backend.
+    pub execution_provider: ExecutionProvider,
+    /// Local model directory. `None` = resolve via `WAVEKAT_MODEL_DIR` env var,
+    /// then auto-download from HF Hub.
+    pub model_dir: Option<PathBuf>,
+}
+
+impl ModelConfig {
+    /// Set a local model directory, bypassing HF Hub download.
+    ///
+    /// The directory must mirror the HF repo layout:
+    /// `int4/` or `fp32/`, `embeddings/`, `tokenizer/`.
+    pub fn with_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.model_dir = Some(dir.into());
+        self
+    }
+
+    /// Set the model precision (quantization variant).
+    pub fn with_precision(mut self, precision: ModelPrecision) -> Self {
+        self.precision = precision;
+        self
+    }
+
+    /// Set the ONNX execution provider.
+    pub fn with_execution_provider(mut self, ep: ExecutionProvider) -> Self {
+        self.execution_provider = ep;
+        self
+    }
+}
+
 /// Qwen3-TTS backend using ONNX Runtime.
 pub struct Qwen3Tts {
     model: model::Model,
@@ -61,36 +138,25 @@ pub struct Qwen3Tts {
 }
 
 impl Qwen3Tts {
-    /// Create a new INT4 backend, downloading model files from HF Hub if needed.
+    /// Create a new backend with default config (INT4, CPU, auto-download).
     ///
     /// Files are cached by the HF Hub client (default `~/.cache/huggingface/hub/`).
-    /// Set `HF_HOME` to change the cache root, or `HF_TOKEN` for authentication.
-    /// Set `WAVEKAT_MODEL_DIR` to load from a local directory and skip all downloads.
-    ///
-    /// Use [`new_with_precision`](Self::new_with_precision) to select FP32.
+    /// Set `HF_HOME` to change the cache root, `HF_TOKEN` for authentication, or
+    /// `WAVEKAT_MODEL_DIR` to load from a local directory and skip all downloads.
     pub fn new() -> Result<Self, TtsError> {
-        Self::new_with_precision(ModelPrecision::Int4)
+        Self::from_config(ModelConfig::default())
     }
 
-    /// Create a new backend with the given precision, downloading files if needed.
-    pub fn new_with_precision(precision: ModelPrecision) -> Result<Self, TtsError> {
-        let model_dir = download::ensure_model_dir(precision)?;
-        Self::from_dir(model_dir, precision)
-    }
-
-    /// Load the model from a directory that mirrors the HF repo layout.
+    /// Create a new backend with the given [`ModelConfig`].
     ///
-    /// Expected subdirectories:
-    /// - `int4/` or `fp32/` — ONNX models (`talker_prefill.onnx`, etc.)
-    /// - `embeddings/` — `.npy` embedding tables
-    /// - `tokenizer/` — `vocab.json`, `merges.txt`
-    pub fn from_dir(
-        model_dir: impl AsRef<Path>,
-        precision: ModelPrecision,
-    ) -> Result<Self, TtsError> {
-        let model_dir = model_dir.as_ref();
-        let model = model::Model::load(model_dir, precision)?;
-        let tokenizer = tokenizer::Tokenizer::new(model_dir)?;
+    /// Model files are resolved in priority order:
+    /// 1. `config.model_dir` (if set)
+    /// 2. `WAVEKAT_MODEL_DIR` environment variable
+    /// 3. Auto-download from HF Hub
+    pub fn from_config(config: ModelConfig) -> Result<Self, TtsError> {
+        let model_dir = download::resolve_model_dir(&config)?;
+        let model = model::Model::load(model_dir.as_ref(), &config)?;
+        let tokenizer = tokenizer::Tokenizer::new(&model_dir)?;
         Ok(Self { model, tokenizer })
     }
 }

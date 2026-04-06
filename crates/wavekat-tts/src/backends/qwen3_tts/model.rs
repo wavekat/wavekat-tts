@@ -76,11 +76,12 @@ impl Model {
     /// Expected layout (matches the HF repo):
     /// - `model_dir/{int4,fp32}/talker_prefill.onnx` (+ .data), etc.
     /// - `model_dir/embeddings/text_embedding.npy`, etc.
-    pub fn load(model_dir: &Path, precision: super::ModelPrecision) -> Result<Self, TtsError> {
+    pub fn load(model_dir: &Path, config: &super::ModelConfig) -> Result<Self, TtsError> {
         let load_session = |name: &str| -> Result<Session, TtsError> {
-            let path = model_dir.join(precision.subdir()).join(name);
-            Session::builder()
-                .map_err(|e| TtsError::Model(format!("session builder error: {e}")))?
+            let path = model_dir.join(config.precision.subdir()).join(name);
+            let builder = Session::builder()
+                .map_err(|e| TtsError::Model(format!("session builder error: {e}")))?;
+            apply_execution_provider(builder, config.execution_provider)?
                 .commit_from_file(&path)
                 .map_err(|e| TtsError::Model(format!("failed to load {name}: {e}")))
         };
@@ -629,6 +630,26 @@ impl Model {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Register the requested execution provider on a session builder.
+///
+/// CPU is the ORT default — no registration needed. CUDA and CoreML require
+/// an ORT build that includes those providers; otherwise ORT will return an error.
+fn apply_execution_provider(
+    builder: ort::session::builder::SessionBuilder,
+    ep: super::ExecutionProvider,
+) -> Result<ort::session::builder::SessionBuilder, TtsError> {
+    use ort::execution_providers::{CUDAExecutionProvider, CoreMLExecutionProvider};
+    match ep {
+        super::ExecutionProvider::Cpu => Ok(builder),
+        super::ExecutionProvider::Cuda => builder
+            .with_execution_providers([CUDAExecutionProvider::default().build()])
+            .map_err(|e| TtsError::Model(format!("CUDA execution provider error: {e}"))),
+        super::ExecutionProvider::CoreMl => builder
+            .with_execution_providers([CoreMLExecutionProvider::default().build()])
+            .map_err(|e| TtsError::Model(format!("CoreML execution provider error: {e}"))),
+    }
+}
 
 /// SiLU-gated MLP text projection: 2048 → 2048.
 fn text_project(
