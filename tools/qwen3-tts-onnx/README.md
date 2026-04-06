@@ -42,17 +42,20 @@ pip install -r requirements.txt
 
 # FP32
 python generate_onnx.py --text "Give every small business the voice of a big one." \
-  --instruct "Speak in a warm and friendly female voice"
+  --instruct "Speak in a warm and friendly female voice" \
+  -o output_fp32.wav
 
 # INT4 (~4x smaller, faster)
 python generate_onnx.py --variant int4 \
   --text "Give every small business the voice of a big one." \
-  --instruct "Speak in a warm and friendly female voice"
+  --instruct "Speak in a warm and friendly female voice" \
+  -o output_int4.wav
 
 # Chinese
 python generate_onnx.py --variant int4 --lang chinese \
   --text "让每一家小企业，都拥有大企业的声音。" \
-  --instruct "Speak in a warm and professional female voice"
+  --instruct "Speak in a warm and professional female voice" \
+  -o output_zh.wav
 ```
 
 ## Model Architecture
