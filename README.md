@@ -73,7 +73,7 @@ Generate a WAV file from text (model files are auto-downloaded on first run):
 
 ```sh
 cargo run --example synthesize --features qwen3-tts,hound -- "Hello, world\!"
-cargo run --example synthesize --features qwen3-tts,hound -- --language zh "你好世界"
+cargo run --example synthesize --features qwen3-tts,hound -- --instruction "Speak in a warm, friendly tone." "Give every small business the voice of a big one."
 cargo run --example synthesize --features qwen3-tts,hound -- --model-dir /path/to/model --output hello.wav "Hello"
 ```
 

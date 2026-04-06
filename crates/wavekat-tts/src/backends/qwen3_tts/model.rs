@@ -90,18 +90,14 @@ impl Model {
         let code_predictor = load_session("code_predictor.onnx")?;
         let vocoder = load_session("vocoder.onnx")?;
 
-        let text_embedding =
-            load_npy2(model_dir, "embeddings/text_embedding.npy")?;
+        let text_embedding = load_npy2(model_dir, "embeddings/text_embedding.npy")?;
         let text_proj_fc1_weight =
             load_npy2(model_dir, "embeddings/text_projection_fc1_weight.npy")?;
-        let text_proj_fc1_bias =
-            load_npy1(model_dir, "embeddings/text_projection_fc1_bias.npy")?;
+        let text_proj_fc1_bias = load_npy1(model_dir, "embeddings/text_projection_fc1_bias.npy")?;
         let text_proj_fc2_weight =
             load_npy2(model_dir, "embeddings/text_projection_fc2_weight.npy")?;
-        let text_proj_fc2_bias =
-            load_npy1(model_dir, "embeddings/text_projection_fc2_bias.npy")?;
-        let talker_codec_embedding =
-            load_npy2(model_dir, "embeddings/talker_codec_embedding.npy")?;
+        let text_proj_fc2_bias = load_npy1(model_dir, "embeddings/text_projection_fc2_bias.npy")?;
+        let talker_codec_embedding = load_npy2(model_dir, "embeddings/talker_codec_embedding.npy")?;
 
         let mut cp_codec_embeddings = Vec::with_capacity(NUM_CP_GROUPS);
         for i in 0..NUM_CP_GROUPS {
@@ -137,15 +133,20 @@ impl Model {
     }
 
     /// Run the full synthesis pipeline: prefill → decode → code predict → vocoder.
+    ///
+    /// `instruction_tokens` — optional user-turn prefix for VoiceDesign control.
+    /// When `Some`, these tokens are embedded (text_proj only) at the start of
+    /// the prefill before the role prefix.
     pub fn synthesize(
         &self,
         text_tokens: &[u32],
         language: &str,
+        instruction_tokens: Option<&[u32]>,
     ) -> Result<AudioFrame<'static>, TtsError> {
         let lang_id = tokenizer::language_id(language)
             .ok_or_else(|| TtsError::UnsupportedLanguage(language.to_string()))?;
 
-        let prefill_embeds = self.build_prefill_embeds(text_tokens, lang_id)?;
+        let prefill_embeds = self.build_prefill_embeds(text_tokens, lang_id, instruction_tokens)?;
         let prefill_len = prefill_embeds.shape()[1];
 
         // Run talker prefill — returns last-position logits
@@ -230,30 +231,48 @@ impl Model {
     /// Build prefill embeddings (non-streaming: all text embedded in prefill).
     ///
     /// ```text
-    /// [im_start, assistant, \n]                 — role prefix (text proj only)
-    /// [think, think_bos, lang_id, think_eos]    — codec prefix (tts_pad + codec_embed)
-    /// [tts_bos + codec_pad]                     — transition
-    /// [text_proj(tok) + codec_pad] × N          — all text tokens
-    /// [text_proj(TTS_EOS) + codec_pad]           — TTS_EOS
-    /// [tts_pad + codec_bos]                      — final
+    /// [instr_tok × M]                            — user turn (text_proj only, optional)
+    /// [im_start, assistant, \n]                  — role prefix (text proj only)
+    /// [think, think_bos, lang_id, think_eos]     — codec prefix (tts_pad + codec_embed)
+    /// [tts_bos + codec_pad]                      — transition
+    /// [text_proj(tok) + codec_pad] × N           — all text tokens
+    /// [text_proj(TTS_EOS) + codec_pad]            — TTS_EOS
+    /// [tts_pad + codec_bos]                       — final
     /// ```
     fn build_prefill_embeds(
         &self,
         text_tokens: &[u32],
         lang_id: i64,
+        instruction_tokens: Option<&[u32]>,
     ) -> Result<Array3<f32>, TtsError> {
-        let codec_pad_embed = self.talker_codec_embedding.row(CODEC_PAD as usize).to_owned();
-        let codec_bos_embed = self.talker_codec_embedding.row(CODEC_BOS as usize).to_owned();
+        let codec_pad_embed = self
+            .talker_codec_embedding
+            .row(CODEC_PAD as usize)
+            .to_owned();
+        let codec_bos_embed = self
+            .talker_codec_embedding
+            .row(CODEC_BOS as usize)
+            .to_owned();
         let tts_bos_embed = self.text_project_token(TTS_BOS);
         let tts_eos_embed = self.text_project_token(TTS_EOS);
 
         // VoiceDesign codec prefix — no speaker slot
         let codec_prefix = [CODEC_THINK, CODEC_THINK_BOS, lang_id, CODEC_THINK_EOS];
 
-        // 3 role + 4 codec_prefix + 1 transition + N text + 1 TTS_EOS + 1 final
-        let seq_len = 3 + codec_prefix.len() + 1 + text_tokens.len() + 1 + 1;
+        let instr_len = instruction_tokens.map_or(0, |t| t.len());
+        // M instruction + 3 role + 4 codec_prefix + 1 transition + N text + 1 TTS_EOS + 1 final
+        let seq_len = instr_len + 3 + codec_prefix.len() + 1 + text_tokens.len() + 1 + 1;
         let mut embeds = Array3::<f32>::zeros((1, seq_len, HIDDEN_DIM));
         let mut pos = 0;
+
+        // 0. Instruction / user-turn tokens: text_proj only (VoiceDesign control)
+        if let Some(instr_toks) = instruction_tokens {
+            for &tok in instr_toks {
+                let embed = self.text_project_token(tok);
+                embeds.slice_mut(s![0, pos, ..]).assign(&embed);
+                pos += 1;
+            }
+        }
 
         // 1. Role prefix: text_proj only
         for &tok in &[IM_START, ASSISTANT, NEWLINE] {

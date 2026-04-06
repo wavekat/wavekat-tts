@@ -50,10 +50,12 @@ baked into `code_predictor.onnx`.
 ## Download: hf-hub
 
 The `ureq` dependency and custom HTTP download logic were replaced with
-`hf-hub = "0.3"` (the official Rust HF Hub client).
+`hf-hub = "0.5"` (the official Rust HF Hub client).
 
-`download::ensure_model_dir()` calls `repo.get(filename)` for each required file.
-HF Hub handles caching, LFS resolution, and authentication transparently.
+`download::ensure_model_dir()` calls `repo.get(filename)` for each file in
+the hardcoded `MODEL_FILES` list.  HF Hub handles caching, LFS resolution, and
+redirect following transparently.  hf-hub 0.5 fixes the relative-`Location`
+redirect handling that broke 0.3 with HuggingFace's `/api/resolve-cache/` backend.
 
 **Cache location**: `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
 The function returns the snapshot root directory, which has the repo's subdirectory
@@ -63,8 +65,14 @@ layout intact.
 | Variable | Purpose |
 |---|---|
 | `WAVEKAT_MODEL_DIR` | Skip HF Hub; load from this local path directly |
-| `HF_TOKEN` | Authentication for private repos |
-| `HF_HOME` | Override cache root |
+| `HF_TOKEN` | Authentication for private/gated repos |
+| `HF_HOME` | Override cache root (also sets the token file location) |
+| `HF_ENDPOINT` | Override the HuggingFace endpoint URL |
+
+> **Note on `HF_TOKEN`**: hf-hub 0.5 does not natively read `HF_TOKEN`
+> from the environment (it reads `$HF_HOME/token`, written by
+> `huggingface-cli login`).  `ensure_model_dir()` bridges this by passing
+> `HF_TOKEN` to `ApiBuilder::with_token` when the env var is set.
 
 ## Model dimensions (1.7B vs 0.6B)
 
@@ -168,9 +176,9 @@ cargo run --example synthesize --features qwen3-tts,hound -- -i
 WAVEKAT_MODEL_DIR=/path/to/snapshot \
   cargo run --example synthesize --features qwen3-tts,hound -- "Hello"
 
-# Non-English
+# With a VoiceDesign instruction
 cargo run --example synthesize --features qwen3-tts,hound -- \
-  --language chinese "让每一家小企业，都拥有大企业的声音。"
+  --instruction "Speak in a calm, professional tone." "Hello, world!"
 ```
 
 The first run downloads ~3.7 GB of INT4 ONNX files and ~0.6 GB of embeddings.

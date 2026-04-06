@@ -25,6 +25,8 @@ use crate::error::TtsError;
 use crate::traits::TtsBackend;
 use crate::types::{SynthesizeRequest, VoiceInfo};
 
+use tokenizer::{IM_END, IM_START, NEWLINE};
+
 mod download;
 mod model;
 mod sampler;
@@ -67,7 +69,31 @@ impl TtsBackend for Qwen3Tts {
     fn synthesize(&self, request: &SynthesizeRequest) -> Result<AudioFrame<'static>, TtsError> {
         let tokens = self.tokenizer.encode(request.text)?;
         let language = request.language.unwrap_or("en");
-        self.model.synthesize(&tokens, language)
+
+        if request.instruction.is_none() {
+            eprintln!(
+                "wavekat-tts warning: Qwen3-TTS is a VoiceDesign model — \
+                 synthesize quality may be inconsistent without a style instruction. \
+                 Set `SynthesizeRequest::with_instruction` to control voice style."
+            );
+        }
+
+        let instruction_tokens = if let Some(instr) = request.instruction {
+            let mut toks = vec![IM_START];
+            toks.extend(self.tokenizer.encode("user")?);
+            toks.push(NEWLINE);
+            toks.extend(self.tokenizer.encode("<instruct>")?);
+            toks.extend(self.tokenizer.encode(instr)?);
+            toks.extend(self.tokenizer.encode("</instruct>")?);
+            toks.push(IM_END);
+            toks.push(NEWLINE);
+            Some(toks)
+        } else {
+            None
+        };
+
+        self.model
+            .synthesize(&tokens, language, instruction_tokens.as_deref())
     }
 
     fn voices(&self) -> Result<Vec<VoiceInfo>, TtsError> {

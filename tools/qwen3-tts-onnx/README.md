@@ -51,11 +51,11 @@ python generate_onnx.py --variant int4 \
   --instruct "Speak in a warm and friendly female voice" \
   -o output_int4.wav
 
-# Chinese
-python generate_onnx.py --variant int4 --lang chinese \
-  --text "让每一家小企业，都拥有大企业的声音。" \
-  --instruct "Speak in a warm and professional female voice" \
-  -o output_zh.wav
+# With a custom style instruction
+python generate_onnx.py --variant int4 \
+  --text "Give every small business the voice of a big one." \
+  --instruct "Speak with confidence and warmth" \
+  -o output_styled.wav
 ```
 
 ## Model Architecture

@@ -2,15 +2,18 @@
 
 use std::path::PathBuf;
 
-use hf_hub::api::sync::Api;
+use hf_hub::api::sync::ApiBuilder;
 use hf_hub::{Repo, RepoType};
 
 use crate::TtsError;
 
 const REPO_ID: &str = "wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX";
-const REVISION: &str = "62c7863a68800d72bcee4f2931148c441571ace7";
+const REVISION: &str = "2026-04-06";
 
 /// Files required for INT4 inference (ONNX models + embeddings + tokenizer).
+///
+/// `embeddings/small_to_mtp_projection_{weight,bias}.npy` are intentionally
+/// excluded — that projection is baked into `code_predictor.onnx`.
 const MODEL_FILES: &[&str] = &[
     "config.json",
     // INT4 ONNX models
@@ -55,14 +58,26 @@ const MODEL_FILES: &[&str] = &[
 /// Set `WAVEKAT_MODEL_DIR` to skip HF Hub and load from a local directory
 /// that mirrors the repo layout (`int4/`, `embeddings/`, `tokenizer/`).
 ///
-/// Authentication: set `HF_TOKEN` if the repo requires it.
+/// Authentication: set `HF_TOKEN` if the repo requires it.  hf-hub 0.5 does
+/// not read `HF_TOKEN` from the environment natively; this function bridges
+/// the gap by passing it to `ApiBuilder::with_token`.
+///
 /// Cache location: `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
 pub fn ensure_model_dir() -> Result<PathBuf, TtsError> {
     if let Ok(dir) = std::env::var("WAVEKAT_MODEL_DIR") {
         return Ok(PathBuf::from(dir));
     }
 
-    let api = Api::new()
+    // from_env() reads HF_HOME / HF_ENDPOINT.
+    // Bridge HF_TOKEN which hf-hub doesn't read from the environment natively.
+    let mut builder = ApiBuilder::from_env();
+    if let Ok(token) = std::env::var("HF_TOKEN") {
+        if !token.is_empty() {
+            builder = builder.with_token(Some(token));
+        }
+    }
+    let api = builder
+        .build()
         .map_err(|e| TtsError::Model(format!("failed to initialize HF Hub client: {e}")))?;
 
     let repo = api.repo(Repo::with_revision(

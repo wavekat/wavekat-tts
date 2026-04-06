@@ -4,6 +4,7 @@ use crate::TtsError;
 
 // Special text token IDs (Qwen3 BPE vocab)
 pub const IM_START: u32 = 151644;
+pub const IM_END: u32 = 151645;
 pub const ASSISTANT: u32 = 77091;
 pub const NEWLINE: u32 = 198;
 pub const TTS_BOS: u32 = 151672;
