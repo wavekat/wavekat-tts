@@ -27,6 +27,7 @@ Same pattern as
 
 ```sh
 cargo add wavekat-tts --features qwen3-tts
+cargo add wavekat-core --features wav
 ```
 
 ```rust
@@ -45,6 +46,9 @@ let tts = Qwen3Tts::new()?;
 let request = SynthesizeRequest::new("Hello, world")
     .with_instruction("Speak naturally and clearly.");
 let audio = tts.synthesize(&request)?;
+
+// Save to WAV (wavekat-core includes WAV I/O via the `wav` feature):
+audio.write_wav("output.wav")?;
 
 println!("{}s at {} Hz", audio.duration_secs(), audio.sample_rate());
 ```
@@ -77,10 +81,10 @@ Two trait families:
 Generate a WAV file from text (model files are auto-downloaded on first run):
 
 ```sh
-cargo run --example synthesize --features qwen3-tts,hound -- "Hello, world\!"
-cargo run --example synthesize --features qwen3-tts,hound -- --instruction "Speak in a warm, friendly tone." "Give every small business the voice of a big one."
-cargo run --example synthesize --features qwen3-tts,hound -- --precision fp32 "Hello"
-cargo run --example synthesize --features qwen3-tts,hound -- --model-dir /path/to/model --output hello.wav "Hello"
+cargo run --example synthesize --features qwen3-tts -- "Hello, world\!"
+cargo run --example synthesize --features qwen3-tts -- --instruction "Speak in a warm, friendly tone." "Give every small business the voice of a big one."
+cargo run --example synthesize --features qwen3-tts -- --precision fp32 "Hello"
+cargo run --example synthesize --features qwen3-tts -- --model-dir /path/to/model --output hello.wav "Hello"
 ```
 
 ## Feature flags
@@ -89,6 +93,8 @@ cargo run --example synthesize --features qwen3-tts,hound -- --model-dir /path/t
 |------|---------|-------------|
 | `qwen3-tts` | off | Qwen3-TTS local ONNX inference |
 | `cosyvoice` | off | CosyVoice local ONNX inference (planned) |
+
+WAV I/O (`write_wav` / `from_wav`) is provided by `wavekat-core` via its `wav` feature flag.
 
 ## License
 
