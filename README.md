@@ -18,10 +18,10 @@ Same pattern as
 
 ## Backends
 
-| Backend | Feature flag | License |
-|---------|-------------|---------|
-| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | Apache 2.0 |
-| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | Apache 2.0 |
+| Backend | Feature flag | Status | License |
+|---------|-------------|--------|---------|
+| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | ✅ Available | Apache 2.0 |
+| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | 🚧 Planned | Apache 2.0 |
 
 ## Quick start
 
@@ -88,7 +88,7 @@ cargo run --example synthesize --features qwen3-tts,hound -- --model-dir /path/t
 | Flag | Default | Description |
 |------|---------|-------------|
 | `qwen3-tts` | off | Qwen3-TTS local ONNX inference |
-| `cosyvoice` | off | CosyVoice local ONNX inference |
+| `cosyvoice` | off | CosyVoice local ONNX inference (planned) |
 
 ## License
 
