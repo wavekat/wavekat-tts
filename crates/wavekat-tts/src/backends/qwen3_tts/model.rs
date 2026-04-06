@@ -85,11 +85,23 @@ impl Model {
                 .map_err(|e| TtsError::Model(format!("failed to load {name}: {e}")))
         };
 
+        eprint!("Loading talker prefill ... ");
         let talker_prefill = load_session("talker_prefill.onnx")?;
-        let talker_decode = load_session("talker_decode.onnx")?;
-        let code_predictor = load_session("code_predictor.onnx")?;
-        let vocoder = load_session("vocoder.onnx")?;
+        eprintln!("done");
 
+        eprint!("Loading talker decode  ... ");
+        let talker_decode = load_session("talker_decode.onnx")?;
+        eprintln!("done");
+
+        eprint!("Loading code predictor ... ");
+        let code_predictor = load_session("code_predictor.onnx")?;
+        eprintln!("done");
+
+        eprint!("Loading vocoder        ... ");
+        let vocoder = load_session("vocoder.onnx")?;
+        eprintln!("done");
+
+        eprint!("Loading embeddings     ... ");
         let text_embedding = load_npy2(model_dir, "embeddings/text_embedding.npy")?;
         let text_proj_fc1_weight =
             load_npy2(model_dir, "embeddings/text_projection_fc1_weight.npy")?;
@@ -106,6 +118,9 @@ impl Model {
                 &format!("embeddings/cp_codec_embedding_{i}.npy"),
             )?);
         }
+
+        eprintln!("done");
+        eprintln!("Model ready.");
 
         let tts_pad_raw = text_embedding.row(TTS_PAD as usize).to_owned();
         let tts_pad_embed = text_project(

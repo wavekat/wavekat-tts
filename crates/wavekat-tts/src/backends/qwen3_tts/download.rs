@@ -106,6 +106,6 @@ pub fn ensure_model_dir() -> Result<PathBuf, TtsError> {
             .map_err(|e| TtsError::Model(format!("failed to download {filename}: {e}")))?;
     }
 
-    eprintln!("Model ready.");
+    eprintln!("Files ready. Loading model ...");
     Ok(model_dir)
 }
