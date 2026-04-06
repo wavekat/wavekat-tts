@@ -32,8 +32,3 @@ make test-all       # test all backends
    use internal tokio runtimes.
 4. **Feature flags per backend** — same pattern as wavekat-vad/turn.
 
-## Pending wavekat-core change
-
-`AudioFrame::from_owned(Vec<f32>, u32) -> AudioFrame<'static>` — avoids the
-borrow-then-clone path when creating frames from producer-owned data (TTS output).
-Currently uses `AudioFrame::new(slice, rate).into_owned()` as a workaround.

@@ -620,9 +620,9 @@ impl Model {
 
         // Trim leading silence produced by the think phase.
         let start = waveform.iter().position(|&s| s.abs() > 0.01).unwrap_or(0);
-        let trimmed = &waveform[start..];
+        let trimmed = waveform[start..].to_vec();
 
-        Ok(AudioFrame::new(trimmed, SAMPLE_RATE).into_owned())
+        Ok(AudioFrame::from_vec(trimmed, SAMPLE_RATE))
     }
 }
 
