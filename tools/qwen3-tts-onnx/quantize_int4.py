@@ -5,15 +5,16 @@ Applies INT4 weight-only quantization to the exported ONNX models using
 onnxruntime's MatMulNBits quantizer. This replaces float32 MatMul weight
 matrices with 4-bit packed representations, reducing model size ~6-8x.
 
-The vocoder is optionally skipped since audio quality can degrade with
-aggressive quantization of the decoder network.
+The vocoder is skipped by default since audio quality can degrade with
+aggressive quantization of the decoder network. Use --include-vocoder
+to quantize it as well.
 
 Examples:
-  # Quantize all models (talker + code predictor + vocoder)
+  # Quantize transformer models only (default, vocoder kept as FP32)
   python quantize_int4.py
 
-  # Quantize only transformer models (skip vocoder)
-  python quantize_int4.py --skip-vocoder
+  # Quantize all models including vocoder
+  python quantize_int4.py --include-vocoder
 
   # Custom model directory
   python quantize_int4.py --model-dir ./output/my-model
@@ -209,7 +210,7 @@ def main():
         epilog="""\
 Examples:
   python quantize_int4.py
-  python quantize_int4.py --skip-vocoder
+  python quantize_int4.py --include-vocoder
   python quantize_int4.py --block-size 64
   python quantize_int4.py --model-dir ./output/my-model
 """,
@@ -232,9 +233,9 @@ Examples:
         help="Use symmetric quantization (default: True)",
     )
     parser.add_argument(
-        "--skip-vocoder",
+        "--include-vocoder",
         action="store_true",
-        help="Skip vocoder quantization (keeps FP32 vocoder for better audio quality)",
+        help="Include vocoder in quantization (skipped by default for better audio quality)",
     )
     parser.add_argument(
         "--skip-validation",
@@ -253,13 +254,13 @@ Examples:
     print(f"  Output: {output_dir}")
     print(f"  Block size: {args.block_size}")
     print(f"  Symmetric: {args.symmetric}")
-    print(f"  Skip vocoder: {args.skip_vocoder}")
+    print(f"  Include vocoder: {args.include_vocoder}")
 
     os.makedirs(output_dir, exist_ok=True)
 
     # Quantize each model
     models = list(MODELS_TO_QUANTIZE)
-    if args.skip_vocoder:
+    if not args.include_vocoder:
         models.remove("vocoder.onnx")
         # Copy FP32 vocoder instead
         for f in ["vocoder.onnx", "vocoder.onnx.data"]:

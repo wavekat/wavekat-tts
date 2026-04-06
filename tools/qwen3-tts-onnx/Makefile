@@ -5,10 +5,20 @@ PYTHON ?= .venv/bin/python
 FP32_DIR = $(OUTPUT_DIR)/fp32
 INT4_DIR = $(OUTPUT_DIR)/int4
 
-.PHONY: all venv export embeddings talker code-predictor vocoder validate quantize generate generate-int4 generate-zh generate-zh-int4 clean help
+.PHONY: all venv export embeddings talker code-predictor vocoder validate validate-int4 quantize generate generate-int4 generate-zh generate-zh-int4 clean help
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
+	@echo "Qwen3-TTS ONNX Export & Quantization Toolkit"
+	@echo ""
+	@echo "Usage: make [target] [MODEL_ID=...] [OUTPUT_DIR=...]"
+	@echo ""
+	@echo "Targets:"
+	@grep -E '^[a-zA-Z0-9_-]+:.*## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-20s %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Variables:"
+	@echo "  MODEL_ID             HuggingFace model ID (default: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)"
+	@echo "  OUTPUT_DIR           Output directory (default: ./output/qwen3-tts-1.7b-voicedesign)"
+	@echo "  PYTHON               Python interpreter (default: .venv/bin/python)"
 
 venv: ## Create virtualenv and install dependencies
 	python3 -m venv .venv
@@ -36,7 +46,7 @@ validate: ## Validate ONNX exports against PyTorch
 validate-int4: ## Validate INT4 exports against PyTorch
 	$(PYTHON) validate.py --model-id $(MODEL_ID) --onnx-dir $(OUTPUT_DIR) --variant int4
 
-quantize: ## Quantize FP32 models to INT4
+quantize: ## Quantize FP32 models to INT4 (vocoder kept FP32)
 	$(PYTHON) quantize_int4.py --model-dir $(OUTPUT_DIR)
 
 generate: ## Generate sample audio (FP32)
