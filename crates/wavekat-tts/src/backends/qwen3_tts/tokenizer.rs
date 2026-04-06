@@ -33,10 +33,10 @@ pub struct Tokenizer {
 }
 
 impl Tokenizer {
-    /// Build tokenizer from `vocab.json` + `merges.txt` in `model_dir`.
+    /// Build tokenizer from `tokenizer/vocab.json` + `tokenizer/merges.txt` in `model_dir`.
     pub fn new(model_dir: &Path) -> Result<Self, TtsError> {
-        let vocab_path = model_dir.join("vocab.json");
-        let merges_path = model_dir.join("merges.txt");
+        let vocab_path = model_dir.join("tokenizer").join("vocab.json");
+        let merges_path = model_dir.join("tokenizer").join("merges.txt");
 
         let bpe = tokenizers::models::bpe::BPE::from_file(
             &vocab_path.to_string_lossy(),

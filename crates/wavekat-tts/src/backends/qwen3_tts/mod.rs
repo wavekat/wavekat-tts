@@ -1,16 +1,17 @@
-//! Qwen3-TTS backend (ONNX, 12Hz-0.6B).
+//! Qwen3-TTS backend (ONNX INT4, 1.7B VoiceDesign).
 //!
-//! Runs the Qwen3-TTS-12Hz-0.6B model via ONNX Runtime.
+//! Runs the Qwen3-TTS-12Hz-1.7B-VoiceDesign model via ONNX Runtime using the
+//! INT4 weight-only quantized models from `wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX`.
 //!
 //! ```ignore
 //! use wavekat_tts::{TtsBackend, SynthesizeRequest};
 //! use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
 //!
-//! // Auto-download model files (~3.8 GB, cached for reuse):
+//! // Auto-download model files via HF Hub (cached at ~/.cache/huggingface/hub/):
 //! let tts = Qwen3Tts::new()?;
 //!
-//! // Or load from an explicit directory:
-//! let tts = Qwen3Tts::from_dir("models/qwen3-tts-0.6b")?;
+//! // Or load from an explicit directory (must mirror the HF repo layout):
+//! let tts = Qwen3Tts::from_dir("models/qwen3-tts-1.7b")?;
 //!
 //! let request = SynthesizeRequest::new("Hello, world");
 //! let audio = tts.synthesize(&request)?;
@@ -36,27 +37,24 @@ pub struct Qwen3Tts {
 }
 
 impl Qwen3Tts {
-    /// Create a new backend, auto-downloading model files if needed.
+    /// Create a new backend, downloading model files from HF Hub if needed.
     ///
-    /// Model files (~3.8 GB) are cached at:
-    /// - `$WAVEKAT_MODEL_DIR` if set, otherwise
-    /// - `$XDG_CACHE_HOME/wavekat/qwen3-tts-0.6b/`, otherwise
-    /// - `$HOME/.cache/wavekat/qwen3-tts-0.6b/`
+    /// Files are cached by the HF Hub client (default `~/.cache/huggingface/hub/`).
+    /// Set `HF_HOME` to change the cache root, or `HF_TOKEN` for authentication.
+    /// Set `WAVEKAT_MODEL_DIR` to load from a local directory and skip all downloads.
     ///
-    /// Use [`from_dir`](Self::from_dir) to skip auto-download and load from
-    /// a specific directory.
+    /// Use [`from_dir`](Self::from_dir) to load from an explicit path.
     pub fn new() -> Result<Self, TtsError> {
         let model_dir = download::ensure_model_dir()?;
         Self::from_dir(model_dir)
     }
 
-    /// Load the model from a directory containing ONNX files and embeddings.
+    /// Load the model from a directory that mirrors the HF repo layout.
     ///
-    /// Expected files:
-    /// - `talker_prefill.onnx`, `talker_decode.onnx`, `code_predictor.onnx`, `vocoder.onnx`
-    /// - `text_embedding.npy`, `text_projection_fc1_weight.npy`, etc.
-    /// - `talker_codec_embedding.npy`, `cp_codec_embedding_{0..14}.npy`
-    /// - `vocab.json`, `merges.txt`
+    /// Expected subdirectories:
+    /// - `int4/` — ONNX models (`talker_prefill.onnx`, `talker_decode.onnx`, etc.)
+    /// - `embeddings/` — `.npy` embedding tables
+    /// - `tokenizer/` — `vocab.json`, `merges.txt`
     pub fn from_dir(model_dir: impl AsRef<Path>) -> Result<Self, TtsError> {
         let model_dir = model_dir.as_ref();
         let model = model::Model::load(model_dir)?;

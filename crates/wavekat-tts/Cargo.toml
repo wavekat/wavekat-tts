@@ -12,7 +12,7 @@ categories = ["multimedia::audio"]
 default = []
 
 # Local inference backends (all ONNX-based)
-qwen3-tts = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:npyz", "dep:rand", "dep:ureq"]
+qwen3-tts = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:npyz", "dep:rand", "dep:hf-hub"]
 cosyvoice = ["dep:ort", "dep:ndarray"]
 
 [dependencies]
@@ -27,7 +27,7 @@ ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
 npyz = { version = "0.8", optional = true }
 rand = { version = "0.9", optional = true }
-ureq = { version = "2", optional = true }
+hf-hub = { version = "0.3", optional = true }
 hound = { version = "3.5", optional = true }
 
 [dev-dependencies]
