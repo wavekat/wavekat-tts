@@ -21,16 +21,24 @@ pipeline_tag: text-to-speech
 base_model: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
 ---
 
+<p align="center">
+  <a href="https://github.com/wavekat/wavekat-tts">
+    <img src="https://github.com/wavekat/wavekat-brand/raw/main/assets/banners/wavekat-tts-narrow.svg" alt="WaveKat TTS">
+  </a>
+</p>
+
 # Qwen3-TTS 1.7B VoiceDesign (ONNX)
 
 ONNX export of [Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) for inference with ONNX Runtime. No PyTorch required at inference time.
 
 Both FP32 and INT4 (weight-only, RTN) variants are included.
 
+> Exported and maintained by [WaveKat](https://github.com/wavekat) as part of the [wavekat-tts](https://github.com/wavekat/wavekat-tts) voice pipeline.
+
 ## Quick Start
 
 ```bash
-pip install onnxruntime numpy soundfile transformers
+pip install -r requirements.txt
 
 # FP32
 python generate_onnx.py --text "Give every small business the voice of a big one." \
@@ -113,7 +121,11 @@ pip install -r requirements.txt
 make all
 ```
 
+## About WaveKat
+
+[WaveKat](https://github.com/wavekat) builds open-source voice pipeline components in Rust.
+This ONNX export is maintained as part of [wavekat-tts](https://github.com/wavekat/wavekat-tts), which provides unified TTS inference across multiple backends.
+
 ## Acknowledgements
 
 - [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) by the Qwen team at Alibaba Cloud
-- [wavekat-tts](https://github.com/wavekat/wavekat-tts) - Rust TTS library for the WaveKat voice pipeline

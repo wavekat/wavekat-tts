@@ -5,7 +5,7 @@ PYTHON ?= .venv/bin/python
 FP32_DIR = $(OUTPUT_DIR)/fp32
 INT4_DIR = $(OUTPUT_DIR)/int4
 
-.PHONY: all venv export embeddings talker code-predictor vocoder validate validate-int4 quantize generate generate-int4 generate-zh generate-zh-int4 clean help
+.PHONY: all venv export embeddings talker code-predictor vocoder validate validate-int4 quantize hf generate generate-int4 generate-zh generate-zh-int4 clean help
 
 help: ## Show this help
 	@echo "Qwen3-TTS ONNX Export & Quantization Toolkit"
@@ -24,7 +24,7 @@ venv: ## Create virtualenv and install dependencies
 	python3 -m venv .venv
 	.venv/bin/pip install -r requirements.txt
 
-all: venv export validate quantize ## Export FP32, validate, then quantize INT4
+all: venv export validate quantize hf ## Export, validate, quantize, package for HF
 
 export: embeddings talker code-predictor vocoder ## Export all FP32 ONNX models
 
@@ -48,6 +48,14 @@ validate-int4: ## Validate INT4 exports against PyTorch
 
 quantize: ## Quantize FP32 models to INT4 (vocoder kept FP32)
 	$(PYTHON) quantize_int4.py --model-dir $(OUTPUT_DIR)
+
+hf: ## Package output directory for Hugging Face upload
+	@echo "Packaging for Hugging Face..."
+	cp README.md $(OUTPUT_DIR)/README.md
+	sed 's|./output/qwen3-tts-1.7b-voicedesign|.|' generate_onnx.py > $(OUTPUT_DIR)/generate_onnx.py
+	printf 'onnxruntime>=1.24.0\nnumpy>=2.0\nsoundfile>=0.13\ntransformers>=4.57.0\n' > $(OUTPUT_DIR)/requirements.txt
+	printf '*.onnx filter=lfs diff=lfs merge=lfs -text\n*.onnx.data filter=lfs diff=lfs merge=lfs -text\n*.npy filter=lfs diff=lfs merge=lfs -text\n' > $(OUTPUT_DIR)/.gitattributes
+	@echo "Done: $(OUTPUT_DIR) is ready for 'huggingface-cli upload'"
 
 generate: ## Generate sample audio (FP32)
 	$(PYTHON) generate_onnx.py --model-dir $(OUTPUT_DIR) \
