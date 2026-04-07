@@ -209,18 +209,41 @@ system ORT instead of downloading its own prebuilt binaries.
 
 ### 6. Model weights
 
-The HF Hub downloader will fetch weights automatically on first run.
-To persist across sessions, mount Google Drive and set `WAVEKAT_MODEL_DIR`:
+Mount Drive for persistent storage, then copy the model to local `/content/`
+before loading. ORT 1.24 added a security check that rejects `.onnx.data`
+external data paths resolving outside the model directory — HF Hub stores files
+as symlinks (`int4/talker_prefill.onnx.data → ../../blobs/...`) which trigger
+this check when accessed via the Drive FUSE mount. Copying with `cp -rL`
+dereferences symlinks into real files. `/content/` is local NVMe so loading is
+also faster than from Drive.
 
 ```python
 from google.colab import drive
 drive.mount('/content/drive')
 ```
 
-```python
-import os
-os.environ["WAVEKAT_MODEL_DIR"] = "/content/drive/MyDrive/wavekat-models"
-!cargo run --release --example synthesize --features "qwen3-tts,cuda" -- \
+```bash
+LOCAL=/content/wavekat-model
+
+# First run: download to Drive. Subsequent runs: find the cached snapshot.
+if [ ! -f "$LOCAL/config.json" ]; then
+  SNAPSHOT=$(ls -d /content/drive/MyDrive/wavekat-models/models--*/snapshots/*/ 2>/dev/null | head -1)
+  if [ -n "$SNAPSHOT" ]; then
+    echo "Copying model Drive → local (resolving symlinks)..."
+    cp -rL "$SNAPSHOT/." "$LOCAL/"
+  else
+    # No Drive cache yet — let WAVEKAT_MODEL_DIR trigger a fresh download
+    echo "Drive cache not found, will download..."
+    export WAVEKAT_MODEL_DIR=/content/drive/MyDrive/wavekat-models
+  fi
+fi
+
+# Once local copy exists, point directly at it
+[ -f "$LOCAL/config.json" ] && export WAVEKAT_MODEL_DIR=$LOCAL
+```
+
+```bash
+cargo run --release --example synthesize --features "qwen3-tts,cuda" -- \
   --text "Hello from GPU" --out /content/output.wav
 ```
 
