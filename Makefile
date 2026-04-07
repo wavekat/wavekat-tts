@@ -1,4 +1,4 @@
-.PHONY: help check test test-qwen3 test-all fmt clippy doc bench-rtf bench-rtf-cuda bench-rtf-trt bench-csv bench-csv-cuda bench-csv-trt
+.PHONY: help check test test-qwen3 test-all fmt clippy doc bench-rtf bench-rtf-cuda bench-rtf-trt bench-csv bench-csv-cuda bench-csv-trt update-readme
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -45,6 +45,9 @@ bench-csv-cuda: ## RTF benchmark on CUDA T4 (int4), save CSV to bench/results/
 	@mkdir -p bench/results
 	cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- \
 		--provider cuda --hardware t4 --csv > bench/results/cuda-t4-int4.csv
+
+update-readme: ## Update README benchmark table from bench/results/*.csv
+	python3 scripts/update_bench_table.py
 
 bench-csv-trt: ## RTF benchmark on TensorRT T4 (int4), save CSV to bench/results/
 	@mkdir -p bench/results
