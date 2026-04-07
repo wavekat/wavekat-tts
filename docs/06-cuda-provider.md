@@ -156,9 +156,10 @@ so_versioned = os.path.join(capi_dir, f"libonnxruntime.so.{onnxruntime.__version
 if os.path.exists(so_versioned) and not os.path.exists(so_plain):
     os.symlink(so_versioned, so_plain)
 
-os.environ["ORT_STRATEGY"]     = "system"
-os.environ["ORT_LIB_LOCATION"] = capi_dir
-os.environ["LD_LIBRARY_PATH"]  = capi_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+os.environ["ORT_STRATEGY"]          = "system"
+os.environ["ORT_LIB_LOCATION"]      = capi_dir
+os.environ["ORT_PREFER_DYNAMIC_LINK"] = "1"
+os.environ["LD_LIBRARY_PATH"]       = capi_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
 ```
 
 **Terminal (Colab shell):**
@@ -171,6 +172,7 @@ ln -sf $CAPI/libonnxruntime.so.1.20.1 $CAPI/libonnxruntime.so
 
 export ORT_STRATEGY=system
 export ORT_LIB_LOCATION=$CAPI
+export ORT_PREFER_DYNAMIC_LINK=1
 export LD_LIBRARY_PATH=$CAPI:$LD_LIBRARY_PATH
 ```
 
