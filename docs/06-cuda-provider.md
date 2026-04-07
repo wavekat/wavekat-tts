@@ -75,7 +75,7 @@ Set `ORT_LOG_LEVEL=1` to confirm which EP is active:
 ```bash
 cargo build --release --features "qwen3-tts,cuda"
 cargo run --release --example synthesize --features "qwen3-tts,cuda" -- \
-  --text "Hello from GPU" --out output.wav
+  --provider cuda --output output.wav "Hello from GPU"
 ```
 
 ## Implementation
@@ -246,7 +246,7 @@ if os.path.isfile(f"{LOCAL}/config.json"):
 
 ```bash
 cargo run --release --example synthesize --features "qwen3-tts,cuda" -- \
-  --text "Hello from GPU" --out /content/output.wav
+  --provider cuda --output /content/output.wav "Hello from GPU"
 ```
 
 ### 7. Download output
@@ -262,6 +262,106 @@ files.download('/content/output.wav')
   re-downloading each session.
 - ORT bundles its own CUDA libraries; no manual driver configuration is needed
   beyond selecting the T4 runtime.
+
+## Azure Ubuntu 24.04 GPU (T4) setup
+
+Azure's **Standard_NC4as_T4_v3** SKU provides a single NVIDIA T4 (16 GB VRAM)
+on Ubuntu 24.04 LTS. Ubuntu 24.04 ships glibc 2.39, so ORT's prebuilt CUDA
+binaries work without the `ORT_STRATEGY=system` workaround required on Colab.
+
+### 1. Provision the VM
+
+```bash
+az vm create \
+  --resource-group <rg> \
+  --name wavekat-gpu \
+  --image Ubuntu2404 \
+  --size Standard_NC4as_T4_v3 \
+  --admin-username azureuser \
+  --generate-ssh-keys
+```
+
+Open SSH if needed:
+
+```bash
+az vm open-port --resource-group <rg> --name wavekat-gpu --port 22
+```
+
+### 2. Install NVIDIA drivers
+
+```bash
+ssh azureuser@<public-ip>
+
+sudo apt update
+sudo apt install -y ubuntu-drivers-common
+sudo ubuntu-drivers install
+sudo reboot
+```
+
+After reconnecting, verify:
+
+```bash
+nvidia-smi
+```
+
+Expected output includes `Tesla T4` and the CUDA driver version (≥ 11.8).
+
+### 3. Install Rust
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+source "$HOME/.cargo/env"
+rustc --version
+```
+
+### 4. Install build dependencies
+
+```bash
+sudo apt install -y pkg-config libssl-dev
+```
+
+### 5. Clone and build
+
+```bash
+git clone https://github.com/wavekat/wavekat-tts.git
+cd wavekat-tts
+cargo build --release --features "qwen3-tts,cuda"
+```
+
+ORT will download its prebuilt CUDA libraries automatically (no extra env vars
+needed on Ubuntu 24.04).
+
+### 6. Model weights
+
+Download weights from Hugging Face Hub:
+
+```bash
+pip install huggingface-hub
+huggingface-cli download Qwen/Qwen3-TTS-1.7B --local-dir ~/models/qwen3-tts-1.7b
+export WAVEKAT_MODEL_DIR=~/models/qwen3-tts-1.7b
+```
+
+### 7. Run
+
+```bash
+cargo run --release --example synthesize --features "qwen3-tts,cuda" -- \
+  --provider cuda --output ~/output.wav "Hello from Azure GPU"
+```
+
+Confirm the CUDA EP is active:
+
+```bash
+ORT_LOG_LEVEL=1 cargo run --release --example synthesize --features "qwen3-tts,cuda" -- \
+  --provider cuda --output ~/output.wav "Hello from Azure GPU" 2>&1 | grep -i cuda
+# [I:ort:session] [CUDAExecutionProvider] Created CUDA EP on device 0
+```
+
+### Notes
+
+- Ubuntu 24.04 has glibc 2.39 — no `ORT_STRATEGY=system` or symlink patching needed.
+- The `Standard_NC4as_T4_v3` SKU is available in East US, West US 2, and several
+  European regions. Check availability with `az vm list-skus`.
+- Stop the VM when idle to avoid billing: `az vm deallocate --resource-group <rg> --name wavekat-gpu`.
 
 ## Open questions
 
