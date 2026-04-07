@@ -222,24 +222,26 @@ from google.colab import drive
 drive.mount('/content/drive')
 ```
 
-```bash
-LOCAL=/content/wavekat-model
+```python
+import glob, os, shutil
 
-# First run: download to Drive. Subsequent runs: find the cached snapshot.
-if [ ! -f "$LOCAL/config.json" ]; then
-  SNAPSHOT=$(ls -d /content/drive/MyDrive/wavekat-models/models--*/snapshots/*/ 2>/dev/null | head -1)
-  if [ -n "$SNAPSHOT" ]; then
-    echo "Copying model Drive → local (resolving symlinks)..."
-    cp -rL "$SNAPSHOT/." "$LOCAL/"
-  else
-    # No Drive cache yet — let WAVEKAT_MODEL_DIR trigger a fresh download
-    echo "Drive cache not found, will download..."
-    export WAVEKAT_MODEL_DIR=/content/drive/MyDrive/wavekat-models
-  fi
-fi
+LOCAL    = "/content/wavekat-model"
+DRIVE    = "/content/drive/MyDrive/wavekat-models"
 
-# Once local copy exists, point directly at it
-[ -f "$LOCAL/config.json" ] && export WAVEKAT_MODEL_DIR=$LOCAL
+if not os.path.isfile(f"{LOCAL}/config.json"):
+    snapshots = glob.glob(f"{DRIVE}/models--*/snapshots/*/")
+    if snapshots:
+        snapshot = snapshots[0]
+        print(f"Copying {snapshot} → {LOCAL} (resolving symlinks)...")
+        shutil.copytree(snapshot, LOCAL, symlinks=False, dirs_exist_ok=True)
+        print("Done.")
+    else:
+        print("Drive cache not found — will download to Drive on first run.")
+        os.environ["WAVEKAT_MODEL_DIR"] = DRIVE
+
+if os.path.isfile(f"{LOCAL}/config.json"):
+    os.environ["WAVEKAT_MODEL_DIR"] = LOCAL
+    print(f"WAVEKAT_MODEL_DIR={LOCAL}")
 ```
 
 ```bash
