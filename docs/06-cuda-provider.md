@@ -151,10 +151,15 @@ capi_dir = os.path.join(os.path.dirname(onnxruntime.__file__), "capi")
 
 # The pip package ships libonnxruntime.so.1.20.1 but no unversioned symlink.
 # ort-sys requires libonnxruntime.so — create it if missing.
-so_plain     = os.path.join(capi_dir, "libonnxruntime.so")
 so_versioned = os.path.join(capi_dir, f"libonnxruntime.so.{onnxruntime.__version__}")
+# ort-sys needs libonnxruntime.so (unversioned) for linking
+so_plain = os.path.join(capi_dir, "libonnxruntime.so")
 if os.path.exists(so_versioned) and not os.path.exists(so_plain):
     os.symlink(so_versioned, so_plain)
+# runtime linker resolves the SONAME libonnxruntime.so.1 (major version only)
+so_major = os.path.join(capi_dir, "libonnxruntime.so.1")
+if os.path.exists(so_versioned) and not os.path.exists(so_major):
+    os.symlink(so_versioned, so_major)
 
 os.environ["ORT_STRATEGY"]          = "system"
 os.environ["ORT_LIB_LOCATION"]      = capi_dir
@@ -168,6 +173,7 @@ os.environ["LD_LIBRARY_PATH"]       = capi_dir + ":" + os.environ.get("LD_LIBRAR
 pip install -q onnxruntime-gpu==1.20.1
 
 CAPI=/usr/local/lib/python3.12/dist-packages/onnxruntime/capi
+ln -sf $CAPI/libonnxruntime.so.1.20.1 $CAPI/libonnxruntime.so.1
 ln -sf $CAPI/libonnxruntime.so.1.20.1 $CAPI/libonnxruntime.so
 
 export ORT_STRATEGY=system
