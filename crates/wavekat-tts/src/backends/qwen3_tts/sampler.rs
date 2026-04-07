@@ -4,14 +4,15 @@ use rand::Rng;
 #[derive(Debug, Clone)]
 pub struct SamplerConfig {
     pub temperature: f32,
-    pub top_p: f32,
+    pub top_k: usize,
     pub repetition_penalty: f32,
 }
 
-/// Sample a token index from logits using top-p (nucleus) sampling.
+/// Sample a token index from logits using top-k sampling with temperature and
+/// optional repetition penalty.
 ///
 /// `mask` is called with a token index and returns `true` if the token should
-/// be suppressed (set to -inf before softmax).
+/// be suppressed (forced to -inf before sampling).
 pub fn sample(
     logits: &[f32],
     config: &SamplerConfig,
@@ -48,7 +49,16 @@ pub fn sample(
         }
     }
 
-    // 4. Softmax
+    // 4. Top-k filtering: zero out all but the k highest scores
+    if config.top_k > 0 && config.top_k < scores.len() {
+        let mut indexed: Vec<(usize, f32)> = scores.iter().copied().enumerate().collect();
+        indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        for &(i, _) in &indexed[config.top_k..] {
+            scores[i] = f32::NEG_INFINITY;
+        }
+    }
+
+    // 5. Softmax
     let max = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let mut probs: Vec<f32> = scores.iter().map(|&s| (s - max).exp()).collect();
     let sum: f32 = probs.iter().sum();
@@ -58,37 +68,24 @@ pub fn sample(
         }
     }
 
-    // 5. Top-p filtering
-    let mut indexed: Vec<(usize, f32)> = probs.iter().copied().enumerate().collect();
-    indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut cumulative = 0.0;
-    let mut cutoff = indexed.len();
-    for (i, &(_, p)) in indexed.iter().enumerate() {
-        cumulative += p;
-        if cumulative >= config.top_p {
-            cutoff = i + 1;
-            break;
-        }
-    }
-    let candidates = &indexed[..cutoff];
-
-    // Renormalize
-    let cand_sum: f32 = candidates.iter().map(|&(_, p)| p).sum();
-
     // 6. Sample
     let mut rng = rand::rng();
-    let r: f32 = rng.random::<f32>() * cand_sum;
+    let r: f32 = rng.random::<f32>();
     let mut accum = 0.0;
-    for &(idx, p) in candidates {
+    for (i, &p) in probs.iter().enumerate() {
         accum += p;
         if accum >= r {
-            return idx;
+            return i;
         }
     }
 
-    // Fallback: return the highest-probability token
-    candidates[0].0
+    // Fallback: highest-probability token
+    probs
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }
 
 /// Logit mask for the Talker LM (group 0).
@@ -127,7 +124,7 @@ mod tests {
         let logits = vec![0.0; 100];
         let config = SamplerConfig {
             temperature: 1.0,
-            top_p: 0.9,
+            top_k: 50,
             repetition_penalty: 1.0,
         };
         let idx = sample(&logits, &config, &[], no_mask);
@@ -136,11 +133,10 @@ mod tests {
 
     #[test]
     fn sample_respects_mask() {
-        // All logits equal, but mask everything except token 5
         let logits = vec![0.0; 10];
         let config = SamplerConfig {
             temperature: 1.0,
-            top_p: 1.0,
+            top_k: 0,
             repetition_penalty: 1.0,
         };
         let idx = sample(&logits, &config, &[], |i| i != 5);

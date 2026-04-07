@@ -1,229 +1,146 @@
-//! Auto-download model files to a local cache directory.
+//! Download model files from HuggingFace Hub.
 
-use std::fs;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+use hf_hub::api::sync::ApiBuilder;
+use hf_hub::{Repo, RepoType};
 
 use crate::TtsError;
 
-/// Pinned commit — guarantees immutable file URLs.
-const REVISION: &str = "6a297d9641354ef0c16e63d329a93a6239bca0a2";
+const REPO_ID: &str = "wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX";
+const REVISION: &str = "2026-04-06";
 
-const BASE_URL: &str = "https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-Base-ONNX/resolve";
-
-/// (remote_path, local_filename) — remote paths map to the HF repo layout,
-/// local filenames are flattened into the cache directory.
-const MODEL_FILES: &[(&str, &str)] = &[
-    // ONNX sessions + external weight files
-    ("talker_prefill.onnx", "talker_prefill.onnx"),
-    ("talker_prefill.onnx.data", "talker_prefill.onnx.data"),
-    ("talker_decode.onnx", "talker_decode.onnx"),
-    ("talker_decode.onnx.data", "talker_decode.onnx.data"),
-    ("code_predictor.onnx", "code_predictor.onnx"),
-    ("vocoder.onnx", "vocoder.onnx"),
-    ("vocoder.onnx.data", "vocoder.onnx.data"),
-    // Embedding tables (in embeddings/ on HF, flattened locally)
-    ("embeddings/text_embedding.npy", "text_embedding.npy"),
-    (
-        "embeddings/text_projection_fc1_weight.npy",
-        "text_projection_fc1_weight.npy",
-    ),
-    (
-        "embeddings/text_projection_fc1_bias.npy",
-        "text_projection_fc1_bias.npy",
-    ),
-    (
-        "embeddings/text_projection_fc2_weight.npy",
-        "text_projection_fc2_weight.npy",
-    ),
-    (
-        "embeddings/text_projection_fc2_bias.npy",
-        "text_projection_fc2_bias.npy",
-    ),
-    (
-        "embeddings/talker_codec_embedding.npy",
-        "talker_codec_embedding.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_0.npy",
-        "cp_codec_embedding_0.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_1.npy",
-        "cp_codec_embedding_1.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_2.npy",
-        "cp_codec_embedding_2.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_3.npy",
-        "cp_codec_embedding_3.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_4.npy",
-        "cp_codec_embedding_4.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_5.npy",
-        "cp_codec_embedding_5.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_6.npy",
-        "cp_codec_embedding_6.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_7.npy",
-        "cp_codec_embedding_7.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_8.npy",
-        "cp_codec_embedding_8.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_9.npy",
-        "cp_codec_embedding_9.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_10.npy",
-        "cp_codec_embedding_10.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_11.npy",
-        "cp_codec_embedding_11.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_12.npy",
-        "cp_codec_embedding_12.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_13.npy",
-        "cp_codec_embedding_13.npy",
-    ),
-    (
-        "embeddings/cp_codec_embedding_14.npy",
-        "cp_codec_embedding_14.npy",
-    ),
-    // Tokenizer (in tokenizer/ on HF, flattened locally)
-    ("tokenizer/vocab.json", "vocab.json"),
-    ("tokenizer/merges.txt", "merges.txt"),
+/// ONNX model files for INT4 precision.
+const ONNX_FILES_INT4: &[&str] = &[
+    "int4/talker_prefill.onnx",
+    "int4/talker_prefill.onnx.data",
+    "int4/talker_decode.onnx",
+    "int4/talker_decode.onnx.data",
+    "int4/code_predictor.onnx",
+    "int4/code_predictor.onnx.data",
+    "int4/vocoder.onnx",
+    "int4/vocoder.onnx.data",
 ];
 
-/// Resolve the default model cache directory, downloading any missing files.
+/// ONNX model files for FP32 precision.
+const ONNX_FILES_FP32: &[&str] = &[
+    "fp32/talker_prefill.onnx",
+    "fp32/talker_prefill.onnx.data",
+    "fp32/talker_decode.onnx",
+    "fp32/talker_decode.onnx.data",
+    "fp32/code_predictor.onnx",
+    "fp32/code_predictor.onnx.data",
+    "fp32/vocoder.onnx",
+    "fp32/vocoder.onnx.data",
+];
+
+/// Shared files required for all precision variants (embeddings + tokenizer + config).
+///
+/// `embeddings/small_to_mtp_projection_{weight,bias}.npy` are intentionally
+/// excluded — that projection is baked into `code_predictor.onnx`.
+const SHARED_FILES: &[&str] = &[
+    "config.json",
+    // Embedding tables
+    "embeddings/text_embedding.npy",
+    "embeddings/text_projection_fc1_weight.npy",
+    "embeddings/text_projection_fc1_bias.npy",
+    "embeddings/text_projection_fc2_weight.npy",
+    "embeddings/text_projection_fc2_bias.npy",
+    "embeddings/talker_codec_embedding.npy",
+    "embeddings/cp_codec_embedding_0.npy",
+    "embeddings/cp_codec_embedding_1.npy",
+    "embeddings/cp_codec_embedding_2.npy",
+    "embeddings/cp_codec_embedding_3.npy",
+    "embeddings/cp_codec_embedding_4.npy",
+    "embeddings/cp_codec_embedding_5.npy",
+    "embeddings/cp_codec_embedding_6.npy",
+    "embeddings/cp_codec_embedding_7.npy",
+    "embeddings/cp_codec_embedding_8.npy",
+    "embeddings/cp_codec_embedding_9.npy",
+    "embeddings/cp_codec_embedding_10.npy",
+    "embeddings/cp_codec_embedding_11.npy",
+    "embeddings/cp_codec_embedding_12.npy",
+    "embeddings/cp_codec_embedding_13.npy",
+    "embeddings/cp_codec_embedding_14.npy",
+    // Tokenizer
+    "tokenizer/vocab.json",
+    "tokenizer/merges.txt",
+];
+
+/// Resolve the local directory for the Qwen3-TTS model files, downloading
+/// any missing files from HF Hub as needed.
 ///
 /// Resolution order:
-/// 1. `$WAVEKAT_MODEL_DIR` if set
-/// 2. `$XDG_CACHE_HOME/wavekat/qwen3-tts-0.6b/`
-/// 3. `$HOME/.cache/wavekat/qwen3-tts-0.6b/`
-pub fn ensure_model_dir() -> Result<PathBuf, TtsError> {
-    let dir = default_cache_dir()?;
-    ensure_files(&dir)?;
-    Ok(dir)
-}
+/// 1. `config.model_dir` (if set)
+/// 2. `WAVEKAT_MODEL_DIR` environment variable
+/// 3. Auto-download from HF Hub
+///
+/// Authentication: set `HF_TOKEN` if the repo requires it.  hf-hub 0.5 does
+/// not read `HF_TOKEN` from the environment natively; this function bridges
+/// the gap by passing it to `ApiBuilder::with_token`.
+///
+/// Cache location: `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
+pub fn resolve_model_dir(config: &super::ModelConfig) -> Result<PathBuf, TtsError> {
+    if let Some(dir) = &config.model_dir {
+        return Ok(dir.clone());
+    }
 
-fn default_cache_dir() -> Result<PathBuf, TtsError> {
     if let Ok(dir) = std::env::var("WAVEKAT_MODEL_DIR") {
         return Ok(PathBuf::from(dir));
     }
-    let base = if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        PathBuf::from(xdg)
-    } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".cache")
-    } else {
-        return Err(TtsError::Model(
-            "cannot determine cache directory: set WAVEKAT_MODEL_DIR or HOME".into(),
-        ));
-    };
-    Ok(base.join("wavekat").join("qwen3-tts-0.6b"))
-}
 
-fn ensure_files(dir: &Path) -> Result<(), TtsError> {
-    let missing: Vec<(&str, &str)> = MODEL_FILES
-        .iter()
-        .filter(|(_, local)| !dir.join(local).exists())
-        .copied()
-        .collect();
+    let precision = config.precision;
 
-    if missing.is_empty() {
-        return Ok(());
+    // from_env() reads HF_HOME / HF_ENDPOINT.
+    // Bridge HF_TOKEN which hf-hub doesn't read from the environment natively.
+    let mut builder = ApiBuilder::from_env();
+    if let Ok(token) = std::env::var("HF_TOKEN") {
+        if !token.is_empty() {
+            builder = builder.with_token(Some(token));
+        }
     }
+    let api = builder
+        .build()
+        .map_err(|e| TtsError::Model(format!("failed to initialize HF Hub client: {e}")))?;
 
-    fs::create_dir_all(dir).map_err(|e| {
-        TtsError::Model(format!("failed to create cache dir {}: {e}", dir.display()))
-    })?;
+    let repo = api.repo(Repo::with_revision(
+        REPO_ID.to_string(),
+        RepoType::Model,
+        REVISION.to_string(),
+    ));
 
-    let total = missing.len();
+    let onnx_files = match precision {
+        super::ModelPrecision::Int4 => ONNX_FILES_INT4,
+        super::ModelPrecision::Fp32 => ONNX_FILES_FP32,
+    };
+    let total = 1 + onnx_files.len() + SHARED_FILES[1..].len(); // config + onnx + shared (excl. config)
+
     eprintln!(
-        "Downloading Qwen3-TTS model ({total} files) to {} ...",
-        dir.display()
+        "Ensuring Qwen3-TTS 1.7B ({}) model ({total} files from {REPO_ID})...",
+        precision.subdir()
     );
 
-    for (i, (remote, local)) in missing.iter().enumerate() {
-        let url = format!("{BASE_URL}/{REVISION}/{remote}");
-        let dest = dir.join(local);
-        eprintln!("[{}/{}] {}", i + 1, total, local);
-        download_file(&url, &dest)?;
+    // config.json first — its parent is the snapshot root.
+    eprintln!("[1/{total}] {}", SHARED_FILES[0]);
+    let config_path = repo
+        .get(SHARED_FILES[0])
+        .map_err(|e| TtsError::Model(format!("failed to download {}: {e}", SHARED_FILES[0])))?;
+
+    let model_dir = config_path
+        .parent()
+        .ok_or_else(|| TtsError::Model("unexpected cache path for config.json".into()))?
+        .to_path_buf();
+
+    for (i, filename) in onnx_files
+        .iter()
+        .chain(SHARED_FILES[1..].iter())
+        .enumerate()
+    {
+        eprintln!("[{}/{total}] {filename}", i + 2);
+        repo.get(filename)
+            .map_err(|e| TtsError::Model(format!("failed to download {filename}: {e}")))?;
     }
 
-    eprintln!("Download complete.");
-    Ok(())
-}
-
-fn download_file(url: &str, dest: &Path) -> Result<(), TtsError> {
-    let response = ureq::get(url)
-        .call()
-        .map_err(|e| TtsError::Model(format!("download failed for {url}: {e}")))?;
-
-    let content_length: Option<u64> = response
-        .header("Content-Length")
-        .and_then(|s| s.parse().ok());
-
-    let mut reader = response.into_reader();
-
-    // Write to a temp file first, then rename to avoid partial files on interrupt.
-    let tmp = dest.with_extension("tmp");
-    let mut file = fs::File::create(&tmp)
-        .map_err(|e| TtsError::Model(format!("failed to create {}: {e}", tmp.display())))?;
-
-    let mut buf = [0u8; 256 * 1024];
-    let mut downloaded: u64 = 0;
-    let mut last_report: u64 = 0;
-
-    loop {
-        let n = reader
-            .read(&mut buf)
-            .map_err(|e| TtsError::Model(format!("download read error: {e}")))?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n])
-            .map_err(|e| TtsError::Model(format!("write error: {e}")))?;
-        downloaded += n as u64;
-
-        // Report progress every 50 MB for large files.
-        if downloaded - last_report >= 50_000_000 {
-            if let Some(total) = content_length {
-                let mb = downloaded / 1_000_000;
-                let total_mb = total / 1_000_000;
-                eprint!("\r  {mb}/{total_mb} MB");
-            }
-            last_report = downloaded;
-        }
-    }
-
-    // Clear progress line if we printed any.
-    if last_report > 0 {
-        eprintln!();
-    }
-
-    drop(file);
-    fs::rename(&tmp, dest).map_err(|e| {
-        TtsError::Model(format!(
-            "failed to rename {} → {}: {e}",
-            tmp.display(),
-            dest.display()
-        ))
-    })?;
-
-    Ok(())
+    eprintln!("Files ready. Loading model ...");
+    Ok(model_dir)
 }

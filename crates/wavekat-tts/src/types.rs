@@ -1,7 +1,8 @@
 /// A TTS synthesis request.
 ///
 /// Backend-agnostic parameters that describe what to synthesize.
-/// Each backend interprets `voice` and `language` according to its own catalog.
+/// Each backend interprets `voice`, `instruction`, and `language` according to
+/// its own capabilities; unsupported fields are silently ignored.
 #[derive(Debug, Clone)]
 pub struct SynthesizeRequest<'a> {
     /// Text to synthesize.
@@ -9,14 +10,30 @@ pub struct SynthesizeRequest<'a> {
 
     /// Voice identifier (backend-specific).
     ///
-    /// For Edge-TTS: `"zh-CN-XiaoxiaoNeural"`, `"zh-CN-YunxiNeural"`, etc.
-    /// For Kokoro: `"af_heart"`, `"zf_xiaobei"`, etc.
+    /// Used by backends with a fixed speaker catalog:
+    /// - Edge-TTS: `"zh-CN-XiaoxiaoNeural"`, `"zh-CN-YunxiNeural"`, …
+    /// - Kokoro: `"af_heart"`, `"zf_xiaobei"`, …
+    ///
     /// `None` uses the backend's default voice.
     pub voice: Option<&'a str>,
 
+    /// Free-form voice instruction / style prompt.
+    ///
+    /// Used by instruction-following backends (e.g. Qwen3-TTS VoiceDesign).
+    /// The text describes how the model should speak:
+    ///
+    /// ```text
+    /// "Speak in a calm, professional tone."
+    /// "Narrate with warmth and a gentle pace."
+    /// "Respond with high energy and enthusiasm!"
+    /// ```
+    ///
+    /// `None` lets the backend use its default voice character.
+    pub instruction: Option<&'a str>,
+
     /// Language / locale code.
     ///
-    /// E.g. `"zh-CN"`, `"en-US"`, `"ja-JP"`.
+    /// E.g. `"zh"`, `"en"`, `"ja"`.
     /// `None` uses the backend's default or auto-detects.
     pub language: Option<&'a str>,
 
@@ -33,14 +50,21 @@ impl<'a> SynthesizeRequest<'a> {
         Self {
             text,
             voice: None,
+            instruction: None,
             language: None,
             speed: None,
         }
     }
 
-    /// Set the voice.
+    /// Set the voice identifier.
     pub fn with_voice(mut self, voice: &'a str) -> Self {
         self.voice = Some(voice);
+        self
+    }
+
+    /// Set the voice instruction / style prompt.
+    pub fn with_instruction(mut self, instruction: &'a str) -> Self {
+        self.instruction = Some(instruction);
         self
     }
 

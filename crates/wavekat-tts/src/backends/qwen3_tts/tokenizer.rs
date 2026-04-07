@@ -4,6 +4,7 @@ use crate::TtsError;
 
 // Special text token IDs (Qwen3 BPE vocab)
 pub const IM_START: u32 = 151644;
+pub const IM_END: u32 = 151645;
 pub const ASSISTANT: u32 = 77091;
 pub const NEWLINE: u32 = 198;
 pub const TTS_BOS: u32 = 151672;
@@ -33,10 +34,10 @@ pub struct Tokenizer {
 }
 
 impl Tokenizer {
-    /// Build tokenizer from `vocab.json` + `merges.txt` in `model_dir`.
+    /// Build tokenizer from `tokenizer/vocab.json` + `tokenizer/merges.txt` in `model_dir`.
     pub fn new(model_dir: &Path) -> Result<Self, TtsError> {
-        let vocab_path = model_dir.join("vocab.json");
-        let merges_path = model_dir.join("merges.txt");
+        let vocab_path = model_dir.join("tokenizer").join("vocab.json");
+        let merges_path = model_dir.join("tokenizer").join("merges.txt");
 
         let bpe = tokenizers::models::bpe::BPE::from_file(
             &vocab_path.to_string_lossy(),

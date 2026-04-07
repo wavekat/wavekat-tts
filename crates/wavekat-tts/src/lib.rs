@@ -22,10 +22,10 @@
 //!
 //! # Feature flags
 //!
-//! | Feature | Backend | Chinese | Requires |
-//! |---------|---------|---------|----------|
-//! | `qwen3-tts` | Qwen3-TTS (ONNX) | Excellent | ONNX model download |
-//! | `cosyvoice` | CosyVoice (ONNX) | Excellent | ONNX model download |
+//! | Feature | Backend | Multilingual | Requires |
+//! |---------|---------|-------------|----------|
+//! | `qwen3-tts` | Qwen3-TTS (ONNX) | 10 languages | ONNX model download |
+//! | `cosyvoice` | CosyVoice (ONNX) | Yes | ONNX model download |
 //!
 //! # Quick start
 //!

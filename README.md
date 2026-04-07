@@ -18,10 +18,10 @@ Same pattern as
 
 ## Backends
 
-| Backend | Feature flag | License |
-|---------|-------------|---------|
-| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | Apache 2.0 |
-| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | Apache 2.0 |
+| Backend | Feature flag | Status | License |
+|---------|-------------|--------|---------|
+| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | ✅ Available | Apache 2.0 |
+| [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | 🚧 Planned | Apache 2.0 |
 
 ## Quick start
 
@@ -31,21 +31,33 @@ cargo add wavekat-tts --features qwen3-tts
 
 ```rust
 use wavekat_tts::{TtsBackend, SynthesizeRequest};
-use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
+use wavekat_tts::backends::qwen3_tts::{Qwen3Tts, ModelConfig, ModelPrecision, ExecutionProvider};
 
-// Auto-downloads model files (~3.8 GB) on first run:
+// Auto-downloads INT4 model files on first run, runs on CPU (default):
 let tts = Qwen3Tts::new()?;
 
-// Or load from an explicit directory:
-// let tts = Qwen3Tts::from_dir("models/qwen3-tts-0.6b")?;
+// Or FP32 on CPU:
+// let tts = Qwen3Tts::from_config(ModelConfig::default().with_precision(ModelPrecision::Fp32))?;
 
-let request = SynthesizeRequest::new("Hello, world");
+// Or INT4 from a local directory on CUDA:
+// let tts = Qwen3Tts::from_config(
+//     ModelConfig::default()
+//         .with_dir("models/qwen3-tts-1.7b")
+//         .with_execution_provider(ExecutionProvider::Cuda),
+// )?;
+
+let request = SynthesizeRequest::new("Hello, world")
+    .with_instruction("Speak naturally and clearly.");
 let audio = tts.synthesize(&request)?;
+
+// Save to WAV (wavekat-core includes WAV I/O via the `wav` feature):
+audio.write_wav("output.wav")?;
 
 println!("{}s at {} Hz", audio.duration_secs(), audio.sample_rate());
 ```
 
-Model files are cached at `$WAVEKAT_MODEL_DIR` or `~/.cache/wavekat/qwen3-tts-0.6b/`.
+Model files are cached by the HF Hub client at `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
+Set `WAVEKAT_MODEL_DIR` to load from a local directory and skip all downloads.
 
 All backends produce `AudioFrame<'static>` from [`wavekat-core`](https://github.com/wavekat/wavekat-core) — the same
 type consumed by `wavekat-vad` and `wavekat-turn`.
@@ -72,9 +84,10 @@ Two trait families:
 Generate a WAV file from text (model files are auto-downloaded on first run):
 
 ```sh
-cargo run --example synthesize --features qwen3-tts,hound -- "Hello, world\!"
-cargo run --example synthesize --features qwen3-tts,hound -- --language zh "你好世界"
-cargo run --example synthesize --features qwen3-tts,hound -- --model-dir /path/to/model --output hello.wav "Hello"
+cargo run --example synthesize --features qwen3-tts -- "Hello, world\!"
+cargo run --example synthesize --features qwen3-tts -- --instruction "Speak in a warm, friendly tone." "Give every small business the voice of a big one."
+cargo run --example synthesize --features qwen3-tts -- --precision fp32 "Hello"
+cargo run --example synthesize --features qwen3-tts -- --model-dir /path/to/model --output hello.wav "Hello"
 ```
 
 ## Feature flags
@@ -82,7 +95,9 @@ cargo run --example synthesize --features qwen3-tts,hound -- --model-dir /path/t
 | Flag | Default | Description |
 |------|---------|-------------|
 | `qwen3-tts` | off | Qwen3-TTS local ONNX inference |
-| `cosyvoice` | off | CosyVoice local ONNX inference |
+| `cosyvoice` | off | CosyVoice local ONNX inference (planned) |
+
+WAV I/O (`write_wav` / `from_wav`) is provided by `wavekat-core` via its `wav` feature flag.
 
 ## License
 
