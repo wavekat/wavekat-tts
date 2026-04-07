@@ -253,12 +253,7 @@ fn main() {
             let request = SynthesizeRequest::new(text)
                 .with_language(&language)
                 .with_instruction(&instruction);
-            eprint!(
-                "  [{:6}] warmup {}/{} ...\r",
-                sample.label,
-                w + 1,
-                warmup
-            );
+            eprint!("  [{:6}] warmup {}/{} ...\r", sample.label, w + 1, warmup);
             tts.synthesize(&request).expect("warmup synthesis failed");
         }
         if warmup > 0 {
@@ -315,7 +310,11 @@ fn main() {
             });
         }
 
-        let avg_chars = if iterations > 0 { total_chars / iterations } else { 0 };
+        let avg_chars = if iterations > 0 {
+            total_chars / iterations
+        } else {
+            0
+        };
         summary.push((sample.label, avg_chars, runs));
         eprintln!();
     }
@@ -370,8 +369,16 @@ fn print_table(summary: &[(&'static str, usize, Vec<RunResult>)]) {
     println!("{}", "=".repeat(w));
     println!(
         "{:<8}  {:>5}  {:>7}  {:>7}  {:>7}  {:>7}  {:>7}  {:>7}  {:>8}  {:>8}",
-        "sample", "chars", "rtf_mean", "rtf_std", "rtf_min", "rtf_p50", "rtf_p95", "rtf_max",
-        "audio_s", "synth_s"
+        "sample",
+        "chars",
+        "rtf_mean",
+        "rtf_std",
+        "rtf_min",
+        "rtf_p50",
+        "rtf_p95",
+        "rtf_max",
+        "audio_s",
+        "synth_s"
     );
     println!("{}", "-".repeat(w));
 

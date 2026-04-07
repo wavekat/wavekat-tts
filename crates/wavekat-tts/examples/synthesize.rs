@@ -69,10 +69,10 @@ fn main() {
             "--provider" => {
                 i += 1;
                 provider = match args[i].as_str() {
-                    "cpu"      => ExecutionProvider::Cpu,
-                    "cuda"     => ExecutionProvider::Cuda,
+                    "cpu" => ExecutionProvider::Cpu,
+                    "cuda" => ExecutionProvider::Cuda,
                     "tensorrt" => ExecutionProvider::TensorRt,
-                    "coreml"   => ExecutionProvider::CoreMl,
+                    "coreml" => ExecutionProvider::CoreMl,
                     other => {
                         eprintln!("error: unknown provider \"{other}\", expected cpu, cuda, tensorrt, or coreml");
                         std::process::exit(1);
@@ -102,7 +102,9 @@ fn main() {
         eprintln!("Usage: synthesize [OPTIONS] [TEXT]");
         eprintln!("  --model-dir <PATH>       Model directory (default: auto-download)");
         eprintln!("  --precision <PREC>       Model precision: int4 (default) or fp32");
-        eprintln!("  --provider <EP>          Execution provider: cpu (default), cuda, tensorrt, coreml");
+        eprintln!(
+            "  --provider <EP>          Execution provider: cpu (default), cuda, tensorrt, coreml"
+        );
         eprintln!("  --language <LANG>        Language code (default: en)");
         eprintln!("  --instruction <TEXT>     Voice style instruction (VoiceDesign prompt)");
         eprintln!("                           Default: \"{DEFAULT_INSTRUCTION}\"");
@@ -145,7 +147,9 @@ fn run_interactive(
         .flat_map(|v| v.languages)
         .collect();
 
-    eprintln!("Interactive mode. Type text to synthesize, /help for commands, /quit or Ctrl-C to quit.");
+    eprintln!(
+        "Interactive mode. Type text to synthesize, /help for commands, /quit or Ctrl-C to quit."
+    );
     eprintln!("  language={language}  instruction=\"{instruction}\"");
 
     let stdin = io::stdin();

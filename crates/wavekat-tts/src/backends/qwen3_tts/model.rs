@@ -701,9 +701,7 @@ fn apply_execution_provider(
     match ep {
         super::ExecutionProvider::Cpu => Ok(builder),
         super::ExecutionProvider::Cuda => builder
-            .with_execution_providers([CUDAExecutionProvider::default()
-                .build()
-                .error_on_failure()])
+            .with_execution_providers([CUDAExecutionProvider::default().build().error_on_failure()])
             .map_err(|e| TtsError::Model(format!("CUDA execution provider error: {e}"))),
         super::ExecutionProvider::TensorRt => builder
             .with_execution_providers([TensorRTExecutionProvider::default()
