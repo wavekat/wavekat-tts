@@ -1,5 +1,9 @@
 # MLX Backend for Qwen3-TTS (Apple Silicon)
 
+> **Status: Planned** — not being implemented now. GPU acceleration work is
+> moving to CUDA (Google Colab) first. This doc is kept as a reference for when
+> MLX becomes the priority.
+
 ## Goal
 
 Run the full Qwen3-TTS pipeline natively on Apple Silicon GPU/ANE using Apple's
