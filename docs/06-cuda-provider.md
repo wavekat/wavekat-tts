@@ -316,7 +316,27 @@ sudo apt update
 sudo apt install -y cuda-libraries-12-6 libcudnn9-cuda-12
 ```
 
-### 3. Install Rust
+### 3. (Optional) Install TensorRT
+
+Required only when building with the `tensorrt` feature. ORT bundles
+`libonnxruntime_providers_tensorrt.so` but dynamically loads
+`libnvinfer.so.10` at runtime — install TensorRT 10 from the NVIDIA CUDA
+repository added in step 2:
+
+```bash
+sudo apt install -y libnvinfer10 libnvinfer-plugin10 libnvonnxparsers10
+```
+
+Verify:
+
+```bash
+ldconfig -p | grep nvinfer
+# expect libnvinfer.so.10 → /usr/lib/x86_64-linux-gnu/libnvinfer.so.10
+```
+
+Skip this step if you only need the `cuda` feature.
+
+### 4. Install Rust
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
@@ -324,13 +344,13 @@ source "$HOME/.cargo/env"
 rustc --version
 ```
 
-### 4. Install build dependencies
+### 5. Install build dependencies
 
 ```bash
 sudo apt install -y pkg-config libssl-dev
 ```
 
-### 5. Clone and build
+### 6. Clone and build
 
 ```bash
 git clone https://github.com/wavekat/wavekat-tts.git
@@ -339,9 +359,10 @@ cargo build --release --features "qwen3-tts,cuda"
 ```
 
 ORT will download its prebuilt CUDA libraries automatically (no extra env vars
-needed on Ubuntu 24.04).
+needed on Ubuntu 24.04). For TensorRT, swap the feature flag for
+`"qwen3-tts,tensorrt"` after completing step 3.
 
-### 6. Model weights
+### 7. Model weights
 
 The app auto-downloads weights from Hugging Face Hub on first run. Point
 `HF_HOME` at a data disk so the cache doesn't fill the small OS disk on `/`:
@@ -352,7 +373,7 @@ sudo chown -R $USER:$USER /checkpoints
 export HF_HOME=/checkpoints/huggingface
 ```
 
-### 7. Run
+### 8. Run
 
 ```bash
 cargo run --release --example synthesize --features "qwen3-tts,cuda" -- \
@@ -370,8 +391,9 @@ ORT_LOG_LEVEL=1 cargo run --release --example synthesize --features "qwen3-tts,c
 ### Notes
 
 - Ubuntu 24.04 has glibc 2.39 — no `ORT_STRATEGY=system` or symlink patching needed.
-- ORT bundles `libonnxruntime_providers_cuda.so` but **not** cuBLAS/cuDNN. Step 2
-  installs those from the NVIDIA CUDA repository.
+- ORT bundles `libonnxruntime_providers_cuda.so` and
+  `libonnxruntime_providers_tensorrt.so` but **not** cuBLAS/cuDNN or
+  `libnvinfer`. Steps 2 and 3 install those from the NVIDIA CUDA repository.
 - The `Standard_NC4as_T4_v3` SKU is available in East US, West US 2, and several
   European regions. Check availability with `az vm list-skus`.
 - Stop the VM when idle to avoid billing: `az vm deallocate --resource-group <rg> --name wavekat-gpu`.
