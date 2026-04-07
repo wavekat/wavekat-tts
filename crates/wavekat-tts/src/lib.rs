@@ -60,9 +60,14 @@ mod error;
 mod traits;
 mod types;
 
-// Provide missing glibc 2.38+ C23 strto* symbols for older Linux hosts (e.g.
-// Ubuntu 22.04 / Colab) when linking ORT prebuilt CUDA/TensorRT binaries.
-#[cfg(all(target_os = "linux", any(feature = "qwen3-tts", feature = "cosyvoice")))]
+// Provide missing glibc 2.38+ C23 strto* symbols when statically linking the
+// bundled ORT on older Linux hosts (e.g. Ubuntu 22.04 / Colab).
+// Not needed with `load-dynamic`, which skips the bundled static ORT entirely.
+#[cfg(all(
+    target_os = "linux",
+    any(feature = "qwen3-tts", feature = "cosyvoice"),
+    not(feature = "load-dynamic"),
+))]
 mod glibc_compat;
 
 pub mod backends;

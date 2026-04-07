@@ -20,6 +20,12 @@ coreml   = ["ort?/coreml"]
 cuda     = ["ort?/cuda"]
 tensorrt = ["ort?/tensorrt"]
 
+# Use dlopen to load a system/pip-installed libonnxruntime.so at runtime instead
+# of the bundled prebuilt binary.  Required on Linux hosts with glibc < 2.38
+# (e.g. Ubuntu 22.04 / Google Colab) because the bundled CUDA EP plugin is
+# built against glibc 2.38.  Set ORT_DYLIB_PATH to the library path at runtime.
+load-dynamic = ["ort?/load-dynamic"]
+
 [dependencies]
 wavekat-core = { version = "0.0.5", features = ["wav"] }
 thiserror = "2"
