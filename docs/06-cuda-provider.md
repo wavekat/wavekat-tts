@@ -136,45 +136,59 @@ os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + ":" + os.environ["PATH
 
 ### 3. Install ORT system libraries
 
-The prebuilt ORT binaries bundled by `ort-sys` (CUDA variant) require glibc 2.38+,
-but Colab runs Ubuntu 22.04 (glibc 2.35). Use `ORT_STRATEGY=system` with the
-pip-installed `onnxruntime-gpu`, which is compiled for Ubuntu 22.04:
+The prebuilt ORT CUDA binaries from `ort-sys` require glibc 2.38+, but Colab
+runs Ubuntu 22.04 (glibc 2.35). Use `ORT_STRATEGY=system` with the pip-installed
+`onnxruntime-gpu` instead, which is compiled for Ubuntu 22.04.
+
+**Version requirement:** `ort-sys` 2.0.0-rc.12 requests ORT C API version 24.
+The pip package version must match — `onnxruntime-gpu` N.x ships API version N
+(e.g. `1.24.x` → API 24). Install the matching version:
+
+```bash
+pip install onnxruntime-gpu==1.24.0   # adjust patch if needed
+```
+
+Or install the latest and verify:
+
+```bash
+pip install -U onnxruntime-gpu
+python -c "import onnxruntime; print(onnxruntime.__version__)"
+```
+
+After installing, create the symlinks the linker needs (the pip package ships
+only the versioned `.so`, not the plain or major-version names):
 
 **Notebook cell:**
 
 ```python
-!pip install -q onnxruntime-gpu==1.20.1
-
 import onnxruntime, os
 
 capi_dir = os.path.join(os.path.dirname(onnxruntime.__file__), "capi")
-
-# The pip package ships libonnxruntime.so.1.20.1 but no unversioned symlink.
-# ort-sys requires libonnxruntime.so — create it if missing.
 so_versioned = os.path.join(capi_dir, f"libonnxruntime.so.{onnxruntime.__version__}")
-# ort-sys needs libonnxruntime.so (unversioned) for linking
+
+# ort-sys build script needs libonnxruntime.so (unversioned)
 so_plain = os.path.join(capi_dir, "libonnxruntime.so")
 if os.path.exists(so_versioned) and not os.path.exists(so_plain):
     os.symlink(so_versioned, so_plain)
-# runtime linker resolves the SONAME libonnxruntime.so.1 (major version only)
+
+# runtime linker resolves the ELF SONAME libonnxruntime.so.1 (major version)
 so_major = os.path.join(capi_dir, "libonnxruntime.so.1")
 if os.path.exists(so_versioned) and not os.path.exists(so_major):
     os.symlink(so_versioned, so_major)
 
-os.environ["ORT_STRATEGY"]          = "system"
-os.environ["ORT_LIB_LOCATION"]      = capi_dir
+os.environ["ORT_STRATEGY"]            = "system"
+os.environ["ORT_LIB_LOCATION"]        = capi_dir
 os.environ["ORT_PREFER_DYNAMIC_LINK"] = "1"
-os.environ["LD_LIBRARY_PATH"]       = capi_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+os.environ["LD_LIBRARY_PATH"]         = capi_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
 ```
 
 **Terminal (Colab shell):**
 
 ```bash
-pip install -q onnxruntime-gpu==1.20.1
-
 CAPI=/usr/local/lib/python3.12/dist-packages/onnxruntime/capi
-ln -sf $CAPI/libonnxruntime.so.1.20.1 $CAPI/libonnxruntime.so.1
-ln -sf $CAPI/libonnxruntime.so.1.20.1 $CAPI/libonnxruntime.so
+ORT_VER=$(python -c "import onnxruntime; print(onnxruntime.__version__)")
+ln -sf $CAPI/libonnxruntime.so.$ORT_VER $CAPI/libonnxruntime.so.1
+ln -sf $CAPI/libonnxruntime.so.$ORT_VER $CAPI/libonnxruntime.so
 
 export ORT_STRATEGY=system
 export ORT_LIB_LOCATION=$CAPI
