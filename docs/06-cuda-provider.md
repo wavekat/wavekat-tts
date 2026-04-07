@@ -343,12 +343,13 @@ needed on Ubuntu 24.04).
 
 ### 6. Model weights
 
-Download weights from Hugging Face Hub:
+The app auto-downloads weights from Hugging Face Hub on first run. Point
+`HF_HOME` at a data disk so the cache doesn't fill the small OS disk on `/`:
 
 ```bash
-pip install huggingface-hub
-huggingface-cli download Qwen/Qwen3-TTS-1.7B --local-dir ~/models/qwen3-tts-1.7b
-export WAVEKAT_MODEL_DIR=~/models/qwen3-tts-1.7b
+sudo mkdir -p /checkpoints/huggingface
+sudo chown -R $USER:$USER /checkpoints
+export HF_HOME=/checkpoints/huggingface
 ```
 
 ### 7. Run

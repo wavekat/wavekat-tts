@@ -37,3 +37,7 @@ hf-hub = { version = "0.5", optional = true, default-features = false, features 
 [[example]]
 name = "synthesize"
 required-features = ["qwen3-tts"]
+
+[[example]]
+name = "bench_rtf"
+required-features = ["qwen3-tts"]

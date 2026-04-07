@@ -1,4 +1,4 @@
-.PHONY: help check test test-qwen3 test-all fmt clippy doc
+.PHONY: help check test test-qwen3 test-all fmt clippy doc bench-rtf bench-rtf-cuda bench-rtf-trt
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -26,3 +26,12 @@ test-all: ## Run tests with all features
 
 doc: ## Build and open docs
 	cargo doc --all-features --no-deps --open
+
+bench-rtf: ## RTF benchmark on CPU (int4)
+	cargo run --release --example bench_rtf --features qwen3-tts
+
+bench-rtf-cuda: ## RTF benchmark on CUDA (int4) — for Azure T4
+	cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- --provider cuda
+
+bench-rtf-trt: ## RTF benchmark on TensorRT (int4) — for Azure T4
+	cargo run --release --example bench_rtf --features "qwen3-tts,tensorrt" -- --provider tensorrt
