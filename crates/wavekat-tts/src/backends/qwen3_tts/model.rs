@@ -77,8 +77,9 @@ impl Model {
     /// - `model_dir/{int4,fp32}/talker_prefill.onnx` (+ .data), etc.
     /// - `model_dir/embeddings/text_embedding.npy`, etc.
     pub fn load(model_dir: &Path, config: &super::ModelConfig) -> Result<Self, TtsError> {
+        let onnx_dir = prepare_onnx_dir(&model_dir.join(config.precision.subdir()))?;
         let load_session = |name: &str| -> Result<Session, TtsError> {
-            let path = model_dir.join(config.precision.subdir()).join(name);
+            let path = onnx_dir.join(name);
             let builder = Session::builder()
                 .map_err(|e| TtsError::Model(format!("session builder error: {e}")))?;
             apply_execution_provider(builder, config.execution_provider)?
@@ -631,6 +632,61 @@ impl Model {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Ensure ORT can load ONNX models with external data from `onnx_dir`.
+///
+/// HuggingFace Hub snapshot directories store files as symlinks into a
+/// `blobs/` directory.  ORT's external-data path validation resolves symlinks
+/// and rejects any `.onnx.data` file whose real path escapes the model
+/// directory, even though the symlink itself sits right next to the `.onnx`.
+///
+/// When symlinks are detected, this function creates a sibling directory
+/// (`{onnx_dir}.ort`) where each symlink is replaced by a hard link to the
+/// symlink's *target* (resolved via `canonicalize`).  Hard-linking the target
+/// (not the symlink inode) is critical: on some filesystems hard-linking a
+/// symlink succeeds but produces another symlink, which would fail ORT's
+/// validation again.  Hard links are free (no data is copied).  Falls back to
+/// a full copy only on cross-device mounts.
+///
+/// Returns `onnx_dir` unchanged if no symlinks are present.
+fn prepare_onnx_dir(onnx_dir: &Path) -> Result<std::path::PathBuf, TtsError> {
+    let entries: Vec<_> = std::fs::read_dir(onnx_dir)
+        .map_err(|e| TtsError::Model(format!("cannot read {}: {e}", onnx_dir.display())))?
+        .filter_map(|e| e.ok())
+        .collect();
+
+    let has_symlinks = entries.iter().any(|e| e.path().is_symlink());
+    if !has_symlinks {
+        return Ok(onnx_dir.to_path_buf());
+    }
+
+    let resolved = onnx_dir.with_extension("ort");
+    std::fs::create_dir_all(&resolved)
+        .map_err(|e| TtsError::Model(format!("cannot create {}: {e}", resolved.display())))?;
+
+    for entry in &entries {
+        let src = entry.path();
+        let dst = resolved.join(entry.file_name());
+        if dst.exists() {
+            continue;
+        }
+        // Hard-link the symlink's *target*, not the symlink inode itself.
+        // On some filesystems hard-linking a symlink succeeds but produces
+        // another symlink, which would fail ORT's path validation again.
+        let link_src = if src.is_symlink() {
+            src.canonicalize()
+                .map_err(|e| TtsError::Model(format!("cannot resolve {}: {e}", src.display())))?
+        } else {
+            src.clone()
+        };
+        if std::fs::hard_link(&link_src, &dst).is_err() {
+            std::fs::copy(&src, &dst)
+                .map_err(|e| TtsError::Model(format!("cannot copy {}: {e}", src.display())))?;
+        }
+    }
+
+    Ok(resolved)
+}
+
 /// Register the requested execution provider on a session builder.
 ///
 /// CPU is the ORT default — no registration needed. CUDA and CoreML require
@@ -639,14 +695,23 @@ fn apply_execution_provider(
     builder: ort::session::builder::SessionBuilder,
     ep: super::ExecutionProvider,
 ) -> Result<ort::session::builder::SessionBuilder, TtsError> {
-    use ort::execution_providers::{CUDAExecutionProvider, CoreMLExecutionProvider};
+    use ort::execution_providers::{
+        CUDAExecutionProvider, CoreMLExecutionProvider, TensorRTExecutionProvider,
+    };
     match ep {
         super::ExecutionProvider::Cpu => Ok(builder),
         super::ExecutionProvider::Cuda => builder
-            .with_execution_providers([CUDAExecutionProvider::default().build()])
+            .with_execution_providers([CUDAExecutionProvider::default().build().error_on_failure()])
             .map_err(|e| TtsError::Model(format!("CUDA execution provider error: {e}"))),
+        super::ExecutionProvider::TensorRt => builder
+            .with_execution_providers([TensorRTExecutionProvider::default()
+                .build()
+                .error_on_failure()])
+            .map_err(|e| TtsError::Model(format!("TensorRT execution provider error: {e}"))),
         super::ExecutionProvider::CoreMl => builder
-            .with_execution_providers([CoreMLExecutionProvider::default().build()])
+            .with_execution_providers([CoreMLExecutionProvider::default()
+                .build()
+                .error_on_failure()])
             .map_err(|e| TtsError::Model(format!("CoreML execution provider error: {e}"))),
     }
 }

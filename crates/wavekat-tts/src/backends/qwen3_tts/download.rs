@@ -85,15 +85,29 @@ pub fn resolve_model_dir(config: &super::ModelConfig) -> Result<PathBuf, TtsErro
         return Ok(dir.clone());
     }
 
-    if let Ok(dir) = std::env::var("WAVEKAT_MODEL_DIR") {
-        return Ok(PathBuf::from(dir));
-    }
+    // When WAVEKAT_MODEL_DIR is set and config.json already exists there,
+    // treat it as a pre-populated local directory and skip all downloads.
+    // If config.json is absent, fall through and use WAVEKAT_MODEL_DIR as
+    // the HF Hub cache root so files are downloaded there.
+    let cache_dir_override = match std::env::var("WAVEKAT_MODEL_DIR") {
+        Ok(dir) => {
+            let path = PathBuf::from(&dir);
+            if path.join("config.json").exists() {
+                return Ok(path);
+            }
+            Some(path)
+        }
+        Err(_) => None,
+    };
 
     let precision = config.precision;
 
     // from_env() reads HF_HOME / HF_ENDPOINT.
     // Bridge HF_TOKEN which hf-hub doesn't read from the environment natively.
     let mut builder = ApiBuilder::from_env();
+    if let Some(ref dir) = cache_dir_override {
+        builder = builder.with_cache_dir(dir.clone());
+    }
     if let Ok(token) = std::env::var("HF_TOKEN") {
         if !token.is_empty() {
             builder = builder.with_token(Some(token));

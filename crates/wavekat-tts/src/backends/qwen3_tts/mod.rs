@@ -69,14 +69,21 @@ impl ModelPrecision {
 /// Selecting a provider that is unavailable at runtime causes an error at load
 /// time rather than silently falling back. Use [`ExecutionProvider::Cpu`] (the
 /// default) if you need guaranteed availability.
+///
+/// Enable the corresponding Cargo feature to bundle the native libraries:
+/// - `cuda` for [`Cuda`](ExecutionProvider::Cuda)
+/// - `tensorrt` for [`TensorRt`](ExecutionProvider::TensorRt)
+/// - `coreml` for [`CoreMl`](ExecutionProvider::CoreMl)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecutionProvider {
     /// CPU inference via ONNX Runtime. Always available. Default.
     #[default]
     Cpu,
-    /// NVIDIA CUDA GPU inference. Requires an ORT build with CUDA support.
+    /// NVIDIA CUDA GPU inference. Requires `cuda` feature.
     Cuda,
-    /// Apple CoreML (macOS / iOS). Requires an ORT build with CoreML support.
+    /// NVIDIA TensorRT. Requires `tensorrt` feature.
+    TensorRt,
+    /// Apple CoreML (macOS / iOS). Requires `coreml` feature.
     CoreMl,
 }
 

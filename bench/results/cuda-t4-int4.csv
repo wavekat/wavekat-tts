@@ -1,0 +1,16 @@
+backend,precision,provider,hardware,date,sample,chars,iteration,synth_secs,audio_secs,rtf
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,short,66,1,3.181000,4.057792,0.783924
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,short,66,2,3.790286,4.806042,0.788650
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,short,66,3,3.114891,3.978583,0.782915
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,short,66,4,3.171773,4.053667,0.782446
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,short,66,5,3.472673,4.462417,0.778205
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,medium,243,1,19.550738,22.549375,0.867019
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,medium,243,2,16.825036,19.462083,0.864503
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,medium,243,3,15.813848,18.711875,0.845124
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,medium,243,4,16.724455,19.930542,0.839137
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,medium,243,5,17.720516,20.934250,0.846484
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,long,655,1,46.378647,43.818125,1.058435
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,long,655,2,53.422495,49.133000,1.087304
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,long,655,3,46.295702,44.013667,1.051848
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,long,655,4,48.479280,45.570792,1.063824
+qwen3-tts,int4,cuda,Standard_NC4as_T4_v3,2026-04-07,long,655,5,47.073837,44.205833,1.064878

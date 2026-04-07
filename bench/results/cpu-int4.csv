@@ -1,0 +1,16 @@
+backend,precision,provider,hardware,date,sample,chars,iteration,synth_secs,audio_secs,rtf
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,short,66,1,7.882000,4.040000,1.950000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,short,66,2,7.036000,3.580000,1.967000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,short,66,3,7.033000,3.560000,1.974000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,short,66,4,9.177000,4.440000,2.065000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,short,66,5,8.204000,4.210000,1.949000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,medium,243,1,46.086000,22.290000,2.068000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,medium,243,2,45.984000,22.530000,2.041000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,medium,243,3,37.957000,18.840000,2.015000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,medium,243,4,38.513000,18.890000,2.039000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,medium,243,5,41.841000,20.650000,2.026000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,long,655,1,85.839000,37.480000,2.290000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,long,655,2,122.740000,51.160000,2.399000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,long,655,3,154.986000,61.930000,2.503000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,long,655,4,27.911000,12.940000,2.157000
+qwen3-tts,int4,cpu,Standard_NC4as_T4_v3,2026-04-07,long,655,5,119.948000,50.500000,2.375000

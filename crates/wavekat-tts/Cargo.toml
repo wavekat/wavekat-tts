@@ -15,6 +15,11 @@ default = []
 qwen3-tts = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:npyz", "dep:rand", "dep:hf-hub"]
 cosyvoice = ["dep:ort", "dep:ndarray"]
 
+# Execution providers — composable with any ONNX backend feature
+coreml   = ["ort?/coreml"]
+cuda     = ["ort?/cuda"]
+tensorrt = ["ort?/tensorrt"]
+
 [dependencies]
 wavekat-core = { version = "0.0.5", features = ["wav"] }
 thiserror = "2"
@@ -31,4 +36,8 @@ hf-hub = { version = "0.5", optional = true, default-features = false, features 
 
 [[example]]
 name = "synthesize"
+required-features = ["qwen3-tts"]
+
+[[example]]
+name = "bench_rtf"
 required-features = ["qwen3-tts"]

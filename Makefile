@@ -1,9 +1,19 @@
-.PHONY: help check test test-qwen3 test-all fmt clippy doc
+.PHONY: help check ci test test-qwen3 test-all fmt clippy doc bench-rtf bench-rtf-cuda bench-rtf-trt bench-csv bench-csv-cuda bench-csv-trt update-readme
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 check: fmt clippy test ## Run fmt, clippy, and test (no features)
+
+ci: ## Run the full GitHub Actions CI check locally
+	cargo fmt --all -- --check
+	cargo clippy --workspace -- -D warnings
+	cargo test --workspace
+	cargo doc --no-deps -p wavekat-tts --all-features
+	cargo test -p wavekat-tts --no-default-features --features ""
+	cargo test -p wavekat-tts --no-default-features --features "qwen3-tts"
+	cargo test -p wavekat-tts --no-default-features --features "cosyvoice"
+	cargo test -p wavekat-tts --no-default-features --features "qwen3-tts,cosyvoice"
 
 fmt: ## Check formatting
 	cargo fmt --all -- --check
@@ -18,8 +28,38 @@ test: ## Run tests (no features)
 test-qwen3: ## Run tests with qwen3-tts feature
 	cargo test --features qwen3-tts
 
+test-qwen3-cuda: ## Run tests with qwen3-tts + CUDA
+	cargo test --features "qwen3-tts,cuda"
+
 test-all: ## Run tests with all features
 	cargo test --all-features
 
 doc: ## Build and open docs
 	cargo doc --all-features --no-deps --open
+
+bench-rtf: ## RTF benchmark on CPU (int4)
+	cargo run --release --example bench_rtf --features qwen3-tts
+
+bench-rtf-cuda: ## RTF benchmark on CUDA (int4) — for Azure T4
+	cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- --provider cuda
+
+bench-rtf-trt: ## RTF benchmark on TensorRT (int4) — for Azure T4
+	cargo run --release --example bench_rtf --features "qwen3-tts,tensorrt" -- --provider tensorrt
+
+bench-csv: ## RTF benchmark on CPU (int4), save CSV to bench/results/
+	@mkdir -p bench/results
+	cargo run --release --example bench_rtf --features qwen3-tts -- \
+		--hardware Standard_NC4as_T4_v3 --csv > bench/results/cpu-int4.csv
+
+bench-csv-cuda: ## RTF benchmark on CUDA T4 (int4), save CSV to bench/results/
+	@mkdir -p bench/results
+	cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- \
+		--provider cuda --hardware t4 --csv > bench/results/cuda-t4-int4.csv
+
+update-readme: ## Update README benchmark table from bench/results/*.csv
+	python3 scripts/update_bench_table.py
+
+bench-csv-trt: ## RTF benchmark on TensorRT T4 (int4), save CSV to bench/results/
+	@mkdir -p bench/results
+	cargo run --release --example bench_rtf --features "qwen3-tts,tensorrt" -- \
+		--provider tensorrt --hardware t4 --csv > bench/results/trt-t4-int4.csv
