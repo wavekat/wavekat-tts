@@ -640,10 +640,12 @@ impl Model {
 /// directory, even though the symlink itself sits right next to the `.onnx`.
 ///
 /// When symlinks are detected, this function creates a sibling directory
-/// (`{onnx_dir}.ort`) populated with hard links to the same inodes.  Hard
-/// links are free (no data is copied) and have no symlink targets, so ORT's
-/// validation passes.  Falls back to a full copy only when hard links are not
-/// supported (cross-device mount).
+/// (`{onnx_dir}.ort`) where each symlink is replaced by a hard link to the
+/// symlink's *target* (resolved via `canonicalize`).  Hard-linking the target
+/// (not the symlink inode) is critical: on some filesystems hard-linking a
+/// symlink succeeds but produces another symlink, which would fail ORT's
+/// validation again.  Hard links are free (no data is copied).  Falls back to
+/// a full copy only on cross-device mounts.
 ///
 /// Returns `onnx_dir` unchanged if no symlinks are present.
 fn prepare_onnx_dir(onnx_dir: &Path) -> Result<std::path::PathBuf, TtsError> {
@@ -667,7 +669,16 @@ fn prepare_onnx_dir(onnx_dir: &Path) -> Result<std::path::PathBuf, TtsError> {
         if dst.exists() {
             continue;
         }
-        if std::fs::hard_link(&src, &dst).is_err() {
+        // Hard-link the symlink's *target*, not the symlink inode itself.
+        // On some filesystems hard-linking a symlink succeeds but produces
+        // another symlink, which would fail ORT's path validation again.
+        let link_src = if src.is_symlink() {
+            src.canonicalize()
+                .map_err(|e| TtsError::Model(format!("cannot resolve {}: {e}", src.display())))?
+        } else {
+            src.clone()
+        };
+        if std::fs::hard_link(&link_src, &dst).is_err() {
             std::fs::copy(&src, &dst)
                 .map_err(|e| TtsError::Model(format!("cannot copy {}: {e}", src.display())))?;
         }
