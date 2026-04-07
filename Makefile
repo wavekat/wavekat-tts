@@ -1,9 +1,19 @@
-.PHONY: help check test test-qwen3 test-all fmt clippy doc bench-rtf bench-rtf-cuda bench-rtf-trt bench-csv bench-csv-cuda bench-csv-trt update-readme
+.PHONY: help check ci test test-qwen3 test-all fmt clippy doc bench-rtf bench-rtf-cuda bench-rtf-trt bench-csv bench-csv-cuda bench-csv-trt update-readme
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 check: fmt clippy test ## Run fmt, clippy, and test (no features)
+
+ci: ## Run the full GitHub Actions CI check locally
+	cargo fmt --all -- --check
+	cargo clippy --workspace -- -D warnings
+	cargo test --workspace
+	cargo doc --no-deps -p wavekat-tts --all-features
+	cargo test -p wavekat-tts --no-default-features --features ""
+	cargo test -p wavekat-tts --no-default-features --features "qwen3-tts"
+	cargo test -p wavekat-tts --no-default-features --features "cosyvoice"
+	cargo test -p wavekat-tts --no-default-features --features "qwen3-tts,cosyvoice"
 
 fmt: ## Check formatting
 	cargo fmt --all -- --check
