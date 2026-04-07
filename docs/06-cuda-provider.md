@@ -110,6 +110,69 @@ match config.execution_provider {
 *Estimates based on ORT CUDA EP throughput for similarly-sized transformer
 decode loops. Actual numbers depend on VRAM bandwidth and batch size.*
 
+## Google Colab setup
+
+Colab's free tier provides a T4 GPU (CUDA 12.x) — enough to run the 1.7B model
+at real-time or faster with no local NVIDIA hardware required.
+
+### 1. Enable GPU runtime
+
+Runtime → Change runtime type → Hardware accelerator: **T4 GPU** → Save.
+
+Verify:
+
+```python
+!nvidia-smi
+```
+
+### 2. Install Rust
+
+```python
+!curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+import os
+os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + ":" + os.environ["PATH"]
+!rustc --version
+```
+
+### 3. Clone and build
+
+```python
+!git clone https://github.com/wavekat/wavekat-tts.git
+%cd wavekat-tts
+!cargo build --release --features "qwen3-tts,cuda"
+```
+
+### 4. Model weights
+
+The HF Hub downloader will fetch weights automatically on first run.
+To persist across sessions, mount Google Drive and set `WAVEKAT_MODEL_DIR`:
+
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+```
+
+```python
+import os
+os.environ["WAVEKAT_MODEL_DIR"] = "/content/drive/MyDrive/wavekat-models"
+!cargo run --release --example synthesize --features "qwen3-tts,cuda" -- \
+  --text "Hello from GPU" --out /content/output.wav
+```
+
+### 5. Download output
+
+```python
+from google.colab import files
+files.download('/content/output.wav')
+```
+
+### Notes
+
+- `/content` is wiped on disconnect — pin model weights to Drive to avoid
+  re-downloading each session.
+- ORT bundles its own CUDA libraries; no manual driver configuration is needed
+  beyond selecting the T4 runtime.
+
 ## Open questions
 
 - **ORT CUDA version pinning** — ORT 2.0.0-rc.12 bundles specific CUDA/cuDNN
