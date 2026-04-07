@@ -41,8 +41,9 @@ wavekat-tts = { version = "0.0.1", features = ["qwen3-tts", "cuda"] }
 wavekat-tts = { version = "0.0.1", features = ["qwen3-tts", "tensorrt"] }
 ```
 
-The `ort` crate bundles its own CUDA libraries — no manual `LD_LIBRARY_PATH`
-configuration is needed as long as the host has a compatible CUDA driver.
+The `ort` crate bundles `libonnxruntime_providers_cuda.so` but **not** the
+underlying CUDA runtime libraries (cuBLAS, cuDNN, cuFFT, etc.). Those must be
+installed on the host separately — see the platform-specific setup sections below.
 
 ## Runtime API
 
@@ -260,8 +261,8 @@ files.download('/content/output.wav')
 
 - `/content` is wiped on disconnect — pin model weights to Drive to avoid
   re-downloading each session.
-- ORT bundles its own CUDA libraries; no manual driver configuration is needed
-  beyond selecting the T4 runtime.
+- Colab's T4 runtime includes cuBLAS, cuDNN, and the CUDA driver pre-installed —
+  no extra CUDA library setup needed beyond selecting the GPU runtime.
 
 ## Azure Ubuntu 24.04 GPU (T4) setup
 
@@ -287,7 +288,7 @@ Open SSH if needed:
 az vm open-port --resource-group <rg> --name wavekat-gpu --port 22
 ```
 
-### 2. Install NVIDIA drivers
+### 2. Install NVIDIA drivers and CUDA runtime libraries
 
 ```bash
 ssh azureuser@<public-ip>
@@ -298,13 +299,22 @@ sudo ubuntu-drivers install
 sudo reboot
 ```
 
-After reconnecting, verify:
+After reconnecting, verify the driver and add the NVIDIA CUDA repository to install
+the runtime libraries that ORT's CUDA provider requires (cuBLAS, cuDNN, etc.):
 
 ```bash
-nvidia-smi
-```
+# Verify driver
+nvidia-smi   # expect "Tesla T4", CUDA driver ≥ 12.x
 
-Expected output includes `Tesla T4` and the CUDA driver version (≥ 11.8).
+# Add NVIDIA CUDA 12 repository
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb
+sudo apt update
+
+# Install CUDA 12 runtime libraries (cuBLAS, cuDNN, cuFFT, cuSolver, cuSPARSE)
+# ort-sys 2.0.0-rc.12 targets cu12 by default; any 12.x minor version works.
+sudo apt install -y cuda-libraries-12-6 libcudnn9-cuda-12
+```
 
 ### 3. Install Rust
 
@@ -359,6 +369,8 @@ ORT_LOG_LEVEL=1 cargo run --release --example synthesize --features "qwen3-tts,c
 ### Notes
 
 - Ubuntu 24.04 has glibc 2.39 — no `ORT_STRATEGY=system` or symlink patching needed.
+- ORT bundles `libonnxruntime_providers_cuda.so` but **not** cuBLAS/cuDNN. Step 2
+  installs those from the NVIDIA CUDA repository.
 - The `Standard_NC4as_T4_v3` SKU is available in East US, West US 2, and several
   European regions. Check availability with `az vm list-skus`.
 - Stop the VM when idle to avoid billing: `az vm deallocate --resource-group <rg> --name wavekat-gpu`.
