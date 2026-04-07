@@ -640,12 +640,15 @@ fn apply_execution_provider(
     ep: super::ExecutionProvider,
 ) -> Result<ort::session::builder::SessionBuilder, TtsError> {
     use ort::execution_providers::{
-        CUDAExecutionProvider, CoreMLExecutionProvider, TensorRTExecutionProvider,
+        ArenaExtendStrategy, CUDAExecutionProvider, CoreMLExecutionProvider,
+        TensorRTExecutionProvider,
     };
     match ep {
         super::ExecutionProvider::Cpu => Ok(builder),
         super::ExecutionProvider::Cuda => builder
-            .with_execution_providers([CUDAExecutionProvider::default().build()])
+            .with_execution_providers([CUDAExecutionProvider::default()
+                .with_arena_extend_strategy(ArenaExtendStrategy::SameAsRequested)
+                .build()])
             .map_err(|e| TtsError::Model(format!("CUDA execution provider error: {e}"))),
         super::ExecutionProvider::TensorRt => builder
             .with_execution_providers([TensorRTExecutionProvider::default().build()])
