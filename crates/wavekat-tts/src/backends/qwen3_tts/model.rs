@@ -648,13 +648,18 @@ fn apply_execution_provider(
         super::ExecutionProvider::Cuda => builder
             .with_execution_providers([CUDAExecutionProvider::default()
                 .with_arena_extend_strategy(ArenaExtendStrategy::SameAsRequested)
-                .build()])
+                .build()
+                .error_on_failure()])
             .map_err(|e| TtsError::Model(format!("CUDA execution provider error: {e}"))),
         super::ExecutionProvider::TensorRt => builder
-            .with_execution_providers([TensorRTExecutionProvider::default().build()])
+            .with_execution_providers([TensorRTExecutionProvider::default()
+                .build()
+                .error_on_failure()])
             .map_err(|e| TtsError::Model(format!("TensorRT execution provider error: {e}"))),
         super::ExecutionProvider::CoreMl => builder
-            .with_execution_providers([CoreMLExecutionProvider::default().build()])
+            .with_execution_providers([CoreMLExecutionProvider::default()
+                .build()
+                .error_on_failure()])
             .map_err(|e| TtsError::Model(format!("CoreML execution provider error: {e}"))),
     }
 }
