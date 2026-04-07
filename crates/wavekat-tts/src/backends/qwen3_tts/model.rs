@@ -639,12 +639,17 @@ fn apply_execution_provider(
     builder: ort::session::builder::SessionBuilder,
     ep: super::ExecutionProvider,
 ) -> Result<ort::session::builder::SessionBuilder, TtsError> {
-    use ort::execution_providers::{CUDAExecutionProvider, CoreMLExecutionProvider};
+    use ort::execution_providers::{
+        CUDAExecutionProvider, CoreMLExecutionProvider, TensorRTExecutionProvider,
+    };
     match ep {
         super::ExecutionProvider::Cpu => Ok(builder),
         super::ExecutionProvider::Cuda => builder
             .with_execution_providers([CUDAExecutionProvider::default().build()])
             .map_err(|e| TtsError::Model(format!("CUDA execution provider error: {e}"))),
+        super::ExecutionProvider::TensorRt => builder
+            .with_execution_providers([TensorRTExecutionProvider::default().build()])
+            .map_err(|e| TtsError::Model(format!("TensorRT execution provider error: {e}"))),
         super::ExecutionProvider::CoreMl => builder
             .with_execution_providers([CoreMLExecutionProvider::default().build()])
             .map_err(|e| TtsError::Model(format!("CoreML execution provider error: {e}"))),

@@ -18,6 +18,9 @@ test: ## Run tests (no features)
 test-qwen3: ## Run tests with qwen3-tts feature
 	cargo test --features qwen3-tts
 
+test-qwen3-cuda: ## Run tests with qwen3-tts + CUDA
+	cargo test --features "qwen3-tts,cuda"
+
 test-all: ## Run tests with all features
 	cargo test --all-features
 

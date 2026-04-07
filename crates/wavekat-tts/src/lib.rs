@@ -22,10 +22,22 @@
 //!
 //! # Feature flags
 //!
+//! ## Backends
+//!
 //! | Feature | Backend | Multilingual | Requires |
 //! |---------|---------|-------------|----------|
 //! | `qwen3-tts` | Qwen3-TTS (ONNX) | 10 languages | ONNX model download |
 //! | `cosyvoice` | CosyVoice (ONNX) | Yes | ONNX model download |
+//!
+//! ## Execution providers
+//!
+//! Composable with any backend feature. Selects the inference hardware at build time.
+//!
+//! | Feature | Provider | Platform |
+//! |---------|----------|----------|
+//! | `cuda` | NVIDIA CUDA | Linux / Windows |
+//! | `tensorrt` | NVIDIA TensorRT | Linux / Windows |
+//! | `coreml` | Apple CoreML | macOS / iOS |
 //!
 //! # Quick start
 //!
