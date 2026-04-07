@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
 description = "Unified text-to-speech for voice pipelines with multiple backend support"
 keywords = ["tts", "speech", "audio", "voice", "text-to-speech"]
 categories = ["multimedia::audio"]
