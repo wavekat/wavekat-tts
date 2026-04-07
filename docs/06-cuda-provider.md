@@ -145,7 +145,8 @@ pip-installed `onnxruntime-gpu`, which is compiled for Ubuntu 22.04:
 
 import onnxruntime, os
 os.environ["ORT_STRATEGY"] = "system"
-os.environ["ORT_LIB_LOCATION"] = os.path.dirname(onnxruntime.__file__)
+# libonnxruntime.so lives in the capi/ subdirectory, not the package root
+os.environ["ORT_LIB_LOCATION"] = os.path.join(os.path.dirname(onnxruntime.__file__), "capi")
 ```
 
 These env vars must be set before `cargo build` so that `ort-sys` finds the
