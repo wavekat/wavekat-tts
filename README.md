@@ -115,8 +115,6 @@ Composable with any backend flag. Selects the inference hardware at build time.
 | `tensorrt` | NVIDIA TensorRT |
 | `coreml` | Apple CoreML (macOS) |
 
-WAV I/O (`write_wav` / `from_wav`) is provided by `wavekat-core` via its `wav` feature flag.
-
 ## License
 
 Licensed under [Apache 2.0](LICENSE).
