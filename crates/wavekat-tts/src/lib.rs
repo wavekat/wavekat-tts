@@ -60,6 +60,11 @@ mod error;
 mod traits;
 mod types;
 
+// Provide missing glibc 2.38+ C23 strto* symbols for older Linux hosts (e.g.
+// Ubuntu 22.04 / Colab) when linking ORT prebuilt CUDA/TensorRT binaries.
+#[cfg(all(target_os = "linux", any(feature = "qwen3-tts", feature = "cosyvoice")))]
+mod glibc_compat;
+
 pub mod backends;
 
 pub use error::TtsError;
