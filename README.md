@@ -90,6 +90,12 @@ cargo run --example synthesize --features qwen3-tts -- --precision fp32 "Hello"
 cargo run --example synthesize --features qwen3-tts -- --model-dir /path/to/model --output hello.wav "Hello"
 ```
 
+## Performance
+
+<!-- bench:start -->
+_No results yet. Run `make bench-csv-cuda` on a T4, commit `bench/results/`, and the table will appear here automatically._
+<!-- bench:end -->
+
 ## Try it on Google Colab
 
 No local GPU needed — run Qwen3-TTS on a free T4 in the browser:

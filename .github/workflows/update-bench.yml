@@ -1,0 +1,36 @@
+name: Update benchmark table
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bench/results/**.csv'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-bench-table:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Regenerate benchmark table in README.md
+        run: python scripts/update_bench_table.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet README.md; then
+            echo "README.md unchanged — nothing to commit."
+          else
+            git add README.md
+            git commit -m "docs: update benchmark table from bench/results"
+            git push
+          fi
