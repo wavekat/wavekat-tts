@@ -31,32 +31,93 @@ use wavekat_tts::{SynthesizeRequest, TtsBackend};
 
 struct Sample {
     label: &'static str,
-    text: &'static str,
+    /// Pool of texts rotated across iterations so each run uses different content.
+    texts: &'static [&'static str],
 }
 
 const SAMPLES: &[Sample] = &[
     Sample {
         label: "short",
-        text: "Hello, world! This is a quick test of the speech synthesis system.",
+        texts: &[
+            "Hello, world! This is a quick test of the speech synthesis system.",
+            "The weather today is sunny with a high of twenty-three degrees Celsius.",
+            "Your package has been delivered to the front door of your building.",
+            "Please turn left in five hundred meters, then continue for two miles.",
+            "Your appointment is confirmed for Tuesday at three fifteen in the afternoon.",
+            "An update is available for your device. Would you like to install it now?",
+        ],
     },
     Sample {
         label: "medium",
-        text: "The quick brown fox jumps over the lazy dog. \
-               Speech synthesis has improved dramatically over the past few years. \
-               Modern neural TTS systems can produce highly natural-sounding speech \
-               that is nearly indistinguishable from human voice recordings.",
+        texts: &[
+            "The quick brown fox jumps over the lazy dog. \
+             Speech synthesis has improved dramatically over the past few years. \
+             Modern neural TTS systems can produce highly natural-sounding speech \
+             that is nearly indistinguishable from human voice recordings.",
+            "Scientists have confirmed that regular physical activity reduces the risk \
+             of chronic conditions including heart disease and diabetes. \
+             A thirty-minute walk each day can improve cardiovascular health \
+             and support mental well-being across all age groups.",
+            "The global demand for renewable energy is accelerating as countries commit \
+             to reducing carbon emissions. Solar and wind installations have grown rapidly \
+             in recent years, making clean electricity more affordable than ever \
+             for homes and businesses worldwide.",
+            "Advances in robotics are transforming manufacturing, logistics, and healthcare. \
+             Modern robots can perform delicate surgical procedures, navigate warehouse \
+             environments, and assist elderly patients with daily tasks, \
+             often working alongside human colleagues.",
+            "The history of the internet stretches back to the nineteen sixties, \
+             when researchers first connected computers across university campuses. \
+             What began as a small academic network has grown into a global infrastructure \
+             connecting billions of people and devices.",
+        ],
     },
     Sample {
         label: "long",
-        text: "Artificial intelligence is transforming the way we interact with computers. \
-               Voice interfaces powered by text-to-speech technology are now commonplace \
-               in smartphones, smart speakers, and automotive systems. \
-               The latest generation of neural TTS models uses transformer architectures \
-               trained on thousands of hours of human speech to capture the subtle nuances \
-               of natural spoken language, including prosody, rhythm, and intonation. \
-               These models can generate high-quality audio at sample rates of twenty-four \
-               kilohertz or higher, enabling crisp and clear voice output across a wide range \
-               of applications from accessibility tools to interactive voice assistants.",
+        texts: &[
+            "Artificial intelligence is transforming the way we interact with computers. \
+             Voice interfaces powered by text-to-speech technology are now commonplace \
+             in smartphones, smart speakers, and automotive systems. \
+             The latest generation of neural TTS models uses transformer architectures \
+             trained on thousands of hours of human speech to capture the subtle nuances \
+             of natural spoken language, including prosody, rhythm, and intonation. \
+             These models can generate high-quality audio at sample rates of twenty-four \
+             kilohertz or higher, enabling crisp and clear voice output across a wide range \
+             of applications from accessibility tools to interactive voice assistants.",
+            "Ocean exploration remains one of the most challenging frontiers in modern science. \
+             More than eighty percent of the world's oceans have never been mapped, explored, \
+             or studied in detail, leaving vast regions of our planet largely unknown. \
+             Deep sea research vessels and remotely operated underwater vehicles are slowly \
+             changing this picture, discovering new ecosystems, geological formations, \
+             and species previously unknown to science. These discoveries have important \
+             implications for medicine, materials science, and our understanding of how \
+             life evolved on Earth and potentially on other worlds in the solar system.",
+            "Urban transportation networks are undergoing a fundamental transformation \
+             driven by electrification, automation, and new mobility services. \
+             Electric buses, trams, and bicycles are replacing fossil-fuel vehicles \
+             in many cities, reducing air pollution and greenhouse gas emissions. \
+             Ride-sharing platforms and micro-mobility services are changing how people \
+             think about car ownership, particularly among younger generations who prefer \
+             flexible access over the fixed costs of owning a vehicle. \
+             City planners are reimagining streets to prioritize pedestrians and cyclists, \
+             creating more livable environments while reducing traffic congestion.",
+            "The development of quantum computing promises to solve problems that are \
+             intractable for classical computers, including simulating molecular interactions \
+             for drug discovery and breaking certain cryptographic algorithms. \
+             Current quantum processors must operate near absolute zero to maintain \
+             the fragile quantum states that give them their computational power. \
+             Researchers around the world are racing to build systems with enough \
+             stable qubits to demonstrate a clear advantage over classical hardware \
+             in real-world applications, a milestone often referred to as quantum advantage.",
+            "Throughout history, libraries have served as the guardians of human knowledge, \
+             preserving texts and manuscripts that might otherwise have been lost to time. \
+             The transition from physical collections to digital archives has dramatically \
+             expanded access to information, allowing anyone with an internet connection \
+             to read documents that were once available only to scholars. \
+             Digitization projects at major institutions have made millions of books, \
+             maps, and historical records freely available online, democratizing access \
+             to cultural heritage and enabling new forms of research across disciplines.",
+        ],
     },
 ];
 
@@ -186,12 +247,12 @@ fn main() {
     let mut summary: Vec<(&'static str, usize, Vec<RunResult>)> = Vec::new();
 
     for sample in SAMPLES {
-        let request = SynthesizeRequest::new(sample.text)
-            .with_language(&language)
-            .with_instruction(&instruction);
-
-        // Warmup runs (not counted).
+        // Warmup runs (not counted) — rotate through the text pool.
         for w in 0..warmup {
+            let text = sample.texts[w % sample.texts.len()];
+            let request = SynthesizeRequest::new(text)
+                .with_language(&language)
+                .with_instruction(&instruction);
             eprint!(
                 "  [{:6}] warmup {}/{} ...\r",
                 sample.label,
@@ -204,9 +265,15 @@ fn main() {
             eprintln!();
         }
 
-        // Measured runs.
+        // Measured runs — each iteration uses a different text from the pool.
         let mut runs = Vec::with_capacity(iterations);
+        let mut total_chars: usize = 0;
         for it in 0..iterations {
+            let text = sample.texts[it % sample.texts.len()];
+            let request = SynthesizeRequest::new(text)
+                .with_language(&language)
+                .with_instruction(&instruction);
+
             let t0 = Instant::now();
             let audio = tts.synthesize(&request).expect("synthesis failed");
             let synth_secs = t0.elapsed().as_secs_f64();
@@ -232,7 +299,7 @@ fn main() {
                     hardware,
                     date,
                     sample.label,
-                    sample.text.len(),
+                    text.len(),
                     it + 1,
                     synth_secs,
                     audio_secs,
@@ -240,6 +307,7 @@ fn main() {
                 );
             }
 
+            total_chars += text.len();
             runs.push(RunResult {
                 synth_secs,
                 audio_secs,
@@ -247,7 +315,8 @@ fn main() {
             });
         }
 
-        summary.push((sample.label, sample.text.len(), runs));
+        let avg_chars = if iterations > 0 { total_chars / iterations } else { 0 };
+        summary.push((sample.label, avg_chars, runs));
         eprintln!();
     }
 
