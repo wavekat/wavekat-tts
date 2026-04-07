@@ -99,7 +99,7 @@ def group_rows(all_rows: list[dict]) -> list[tuple[dict, dict]]:
 
 
 def hardware_label(hw: str) -> str:
-    return {"t4": "T4", "a10g": "A10G", "unknown": "—"}.get(hw, hw.upper())
+    return {"t4": "T4", "a10g": "A10G", "unknown": "—"}.get(hw, hw)
 
 
 def provider_label(pv: str) -> str:

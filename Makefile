@@ -38,7 +38,8 @@ bench-rtf-trt: ## RTF benchmark on TensorRT (int4) — for Azure T4
 
 bench-csv: ## RTF benchmark on CPU (int4), save CSV to bench/results/
 	@mkdir -p bench/results
-	cargo run --release --example bench_rtf --features qwen3-tts -- --csv > bench/results/cpu-int4.csv
+	cargo run --release --example bench_rtf --features qwen3-tts -- \
+		--hardware Standard_NC4as_T4_v3 --csv > bench/results/cpu-int4.csv
 
 bench-csv-cuda: ## RTF benchmark on CUDA T4 (int4), save CSV to bench/results/
 	@mkdir -p bench/results

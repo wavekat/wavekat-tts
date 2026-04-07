@@ -95,7 +95,7 @@ cargo run --example synthesize --features qwen3-tts -- --model-dir /path/to/mode
 <!-- bench:start -->
 | Backend | Precision | Provider | Hardware | RTF short | RTF medium | RTF long | Date |
 |---------|-----------|----------|----------|:-----------:|:-----------:|:-----------:|------|
-| qwen3-tts | int4 | CPU | — | 1.98 | 2.04 | 2.34 | 2026-04-07 |
+| qwen3-tts | int4 | CPU | Standard_NC4as_T4_v3 | 1.98 | 2.04 | 2.34 | 2026-04-07 |
 
 _RTF < 1.0 = faster-than-real-time. Lower is better._  
 _To update: run `make bench-csv-cuda` on target hardware, then commit `bench/results/`._
