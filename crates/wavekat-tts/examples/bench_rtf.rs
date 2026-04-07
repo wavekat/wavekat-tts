@@ -8,8 +8,10 @@
 //!
 //! Options:
 //!   --model-dir <PATH>   Model directory (default: auto-download)
+//!   --backend <NAME>     Backend identifier written to CSV (default: qwen3-tts)
 //!   --precision <PREC>   int4 (default) | fp32
 //!   --provider <EP>      cpu (default) | cuda | tensorrt | coreml
+//!   --hardware <NAME>    Hardware label written to CSV, e.g. t4, a10g (default: unknown)
 //!   --iterations <N>     Measured runs per sample (default: 5)
 //!   --warmup <N>         Warmup runs before measurement (default: 1)
 //!   --language <LANG>    Language code (default: en)
@@ -18,8 +20,8 @@
 //!
 //! Examples:
 //!   cargo run --release --example bench_rtf --features qwen3-tts
-//!   cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- --provider cuda
-//!   cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- --provider cuda --csv > results.csv
+//!   cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- --provider cuda --hardware t4
+//!   cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- --provider cuda --hardware t4 --csv > results.csv
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -62,8 +64,10 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     let mut model_dir: Option<PathBuf> = None;
+    let mut backend = "qwen3-tts".to_string();
     let mut precision = ModelPrecision::Int4;
     let mut provider = ExecutionProvider::Cpu;
+    let mut hardware = "unknown".to_string();
     let mut iterations: usize = 5;
     let mut warmup: usize = 1;
     let mut language = "en".to_string();
@@ -76,6 +80,14 @@ fn main() {
             "--model-dir" => {
                 i += 1;
                 model_dir = Some(PathBuf::from(&args[i]));
+            }
+            "--backend" => {
+                i += 1;
+                backend = args[i].clone();
+            }
+            "--hardware" => {
+                i += 1;
+                hardware = args[i].clone();
             }
             "--precision" => {
                 i += 1;
@@ -150,8 +162,20 @@ fn main() {
     let tts = Qwen3Tts::from_config(config).expect("failed to load model");
     eprintln!("Model loaded.\n");
 
+    let precision_str = match precision {
+        ModelPrecision::Int4 => "int4",
+        ModelPrecision::Fp32 => "fp32",
+    };
+    let provider_str = match provider {
+        ExecutionProvider::Cpu => "cpu",
+        ExecutionProvider::Cuda => "cuda",
+        ExecutionProvider::TensorRt => "tensorrt",
+        ExecutionProvider::CoreMl => "coreml",
+    };
+    let date = today_iso();
+
     if csv_mode {
-        println!("sample,chars,iteration,synth_secs,audio_secs,rtf");
+        println!("backend,precision,provider,hardware,date,sample,chars,iteration,synth_secs,audio_secs,rtf");
     } else {
         eprintln!(
             "Benchmark: {} warmup + {} measured iterations per sample\n",
@@ -201,7 +225,12 @@ fn main() {
 
             if csv_mode {
                 println!(
-                    "{},{},{},{:.6},{:.6},{:.6}",
+                    "{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6}",
+                    backend,
+                    precision_str,
+                    provider_str,
+                    hardware,
+                    date,
                     sample.label,
                     sample.text.len(),
                     it + 1,
@@ -314,8 +343,10 @@ Usage:
 
 Options:
   --model-dir <PATH>   Model directory (default: auto-download to HF cache)
+  --backend <NAME>     Backend label in CSV (default: qwen3-tts)
   --precision <PREC>   int4 (default) | fp32
   --provider <EP>      cpu (default) | cuda | tensorrt | coreml
+  --hardware <NAME>    Hardware label in CSV, e.g. t4, a10g (default: unknown)
   --iterations <N>     Measured runs per sample (default: 5)
   --warmup <N>         Warmup runs before measurement (default: 1)
   --language <LANG>    Language code (default: en)
@@ -326,11 +357,49 @@ Examples:
   # CPU benchmark
   cargo run --release --example bench_rtf --features qwen3-tts
 
-  # CUDA benchmark (T4)
-  cargo run --release --example bench_rtf --features \"qwen3-tts,cuda\" -- --provider cuda
-
-  # Save CSV for further analysis
+  # CUDA benchmark on a T4
   cargo run --release --example bench_rtf --features \"qwen3-tts,cuda\" \\
-    -- --provider cuda --csv > results.csv"
+    -- --provider cuda --hardware t4
+
+  # Save CSV for tracking and README auto-update
+  cargo run --release --example bench_rtf --features \"qwen3-tts,cuda\" \\
+    -- --provider cuda --hardware t4 --csv > bench/results/cuda-t4-int4.csv"
     );
+}
+
+/// Return today's date as YYYY-MM-DD (UTC) without any external dependency.
+fn today_iso() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut days = secs / 86400;
+    let mut year = 1970u32;
+    loop {
+        let in_year = if is_leap(year) { 366 } else { 365 };
+        if days < in_year {
+            break;
+        }
+        days -= in_year;
+        year += 1;
+    }
+    let month_lengths = if is_leap(year) {
+        [31u64, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31u64, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut month = 1u32;
+    for &ml in &month_lengths {
+        if days < ml {
+            break;
+        }
+        days -= ml;
+        month += 1;
+    }
+    format!("{:04}-{:02}-{:02}", year, month, days + 1)
+}
+
+fn is_leap(year: u32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }

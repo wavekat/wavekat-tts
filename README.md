@@ -93,12 +93,12 @@ cargo run --example synthesize --features qwen3-tts -- --model-dir /path/to/mode
 ## Performance
 
 <!-- bench:start -->
-| Config | RTF short | RTF medium | RTF long |
-|--------|:-----------:|:-----------:|:-----------:|
-| CPU · int4 | 1.98 | 2.04 | 2.34 |
+| Backend | Precision | Provider | Hardware | RTF short | RTF medium | RTF long | Date |
+|---------|-----------|----------|----------|:-----------:|:-----------:|:-----------:|------|
+| qwen3-tts | int4 | CPU | — | 1.98 | 2.04 | 2.34 | 2026-04-07 |
 
 _RTF < 1.0 = faster-than-real-time. Lower is better._  
-_To update: run `make bench-csv-cuda` on a T4, then commit `bench/results/`._
+_To update: run `make bench-csv-cuda` on target hardware, then commit `bench/results/`._
 <!-- bench:end -->
 
 ## Try it on Google Colab

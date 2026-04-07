@@ -36,14 +36,16 @@ bench-rtf-cuda: ## RTF benchmark on CUDA (int4) — for Azure T4
 bench-rtf-trt: ## RTF benchmark on TensorRT (int4) — for Azure T4
 	cargo run --release --example bench_rtf --features "qwen3-tts,tensorrt" -- --provider tensorrt
 
-bench-csv: ## RTF benchmark on CPU, save CSV to bench/results/
+bench-csv: ## RTF benchmark on CPU (int4), save CSV to bench/results/
 	@mkdir -p bench/results
 	cargo run --release --example bench_rtf --features qwen3-tts -- --csv > bench/results/cpu-int4.csv
 
-bench-csv-cuda: ## RTF benchmark on CUDA (T4), save CSV to bench/results/
+bench-csv-cuda: ## RTF benchmark on CUDA T4 (int4), save CSV to bench/results/
 	@mkdir -p bench/results
-	cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- --provider cuda --csv > bench/results/cuda-t4-int4.csv
+	cargo run --release --example bench_rtf --features "qwen3-tts,cuda" -- \
+		--provider cuda --hardware t4 --csv > bench/results/cuda-t4-int4.csv
 
-bench-csv-trt: ## RTF benchmark on TensorRT (T4), save CSV to bench/results/
+bench-csv-trt: ## RTF benchmark on TensorRT T4 (int4), save CSV to bench/results/
 	@mkdir -p bench/results
-	cargo run --release --example bench_rtf --features "qwen3-tts,tensorrt" -- --provider tensorrt --csv > bench/results/trt-t4-int4.csv
+	cargo run --release --example bench_rtf --features "qwen3-tts,tensorrt" -- \
+		--provider tensorrt --hardware t4 --csv > bench/results/trt-t4-int4.csv

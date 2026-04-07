@@ -3,6 +3,9 @@
 Update the benchmark table in README.md from bench/results/*.csv.
 
 CSV format (produced by `bench_rtf --csv`):
+  backend,precision,provider,hardware,date,sample,chars,iteration,synth_secs,audio_secs,rtf
+
+Legacy format (no metadata columns) is also accepted:
   sample,chars,iteration,synth_secs,audio_secs,rtf
 
 Usage:
@@ -13,6 +16,7 @@ Usage:
 import csv
 import re
 import sys
+from collections import defaultdict
 from pathlib import Path
 from statistics import mean
 
@@ -23,68 +27,122 @@ README = REPO_ROOT / "README.md"
 START_MARKER = "<!-- bench:start -->"
 END_MARKER = "<!-- bench:end -->"
 
-# Canonical sample order.
 SAMPLES = ["short", "medium", "long"]
 
-# Pretty labels for known config names.  Unknown names fall back to the stem.
-LABEL_MAP = {
-    "cpu-int4":      "CPU · int4",
-    "cpu-fp32":      "CPU · fp32",
-    "cuda-t4-int4":  "CUDA T4 · int4",
-    "cuda-t4-fp32":  "CUDA T4 · fp32",
-    "trt-t4-int4":   "TensorRT T4 · int4",
-    "trt-t4-fp32":   "TensorRT T4 · fp32",
+# Display order for known (provider, hardware) combinations.
+SORT_KEY = {
+    ("cpu",      "unknown"): (0, ""),
+    ("cuda",     "t4"):       (1, ""),
+    ("cuda",     "a10g"):     (2, ""),
+    ("tensorrt", "t4"):       (3, ""),
+    ("tensorrt", "a10g"):     (4, ""),
+    ("coreml",   "unknown"):  (5, ""),
 }
 
-SORT_ORDER = list(LABEL_MAP.keys())
+
+def sort_key(config: dict) -> tuple:
+    k = (config["provider"], config["hardware"])
+    order, _ = SORT_KEY.get(k, (99, ""))
+    return (config["backend"], order, config["precision"], config["hardware"])
 
 
-def label_for(stem: str) -> str:
-    return LABEL_MAP.get(stem, stem.replace("-", " ").title())
-
-
-def read_csv(path: Path) -> dict:
-    """Return {sample: {rtf: [floats], synth_secs: [floats]}}."""
-    data: dict = {}
+def read_csv(path: Path) -> list[dict]:
+    """
+    Return a list of row dicts.  Adds default metadata for legacy files
+    that don't have the new columns.
+    """
+    rows = []
     with open(path, newline="") as f:
-        for row in csv.DictReader(f):
-            s = row["sample"]
-            data.setdefault(s, {"rtf": [], "synth_secs": []})
-            data[s]["rtf"].append(float(row["rtf"]))
-            data[s]["synth_secs"].append(float(row["synth_secs"]))
-    return data
+        reader = csv.DictReader(f)
+        for row in reader:
+            if "backend" not in row:
+                # Legacy format — derive metadata from filename
+                stem = path.stem  # e.g. "cuda-t4-int4"
+                parts = stem.split("-")
+                row["backend"] = "qwen3-tts"
+                row["precision"] = parts[-1] if parts[-1] in ("int4", "fp32") else "int4"
+                row["provider"] = parts[0] if parts else "cpu"
+                row["hardware"] = parts[1] if len(parts) > 2 else "unknown"
+                row["date"] = ""
+            rows.append(row)
+    return rows
 
 
-def build_table(configs: list) -> str:
-    present = [s for s in SAMPLES if any(s in d for _, d in configs)]
+def group_rows(all_rows: list[dict]) -> list[tuple[dict, dict]]:
+    """
+    Group rows by (backend, precision, provider, hardware).
+    Returns list of (config_dict, {sample: {rtf: [], synth_secs: []}}).
+    """
+    groups: dict[tuple, dict] = defaultdict(lambda: defaultdict(lambda: {"rtf": [], "synth_secs": []}))
+    configs: dict[tuple, dict] = {}
+
+    for row in all_rows:
+        key = (row["backend"], row["precision"], row["provider"], row["hardware"])
+        groups[key][row["sample"]]["rtf"].append(float(row["rtf"]))
+        groups[key][row["sample"]]["synth_secs"].append(float(row["synth_secs"]))
+        if key not in configs:
+            configs[key] = {
+                "backend":   row["backend"],
+                "precision": row["precision"],
+                "provider":  row["provider"],
+                "hardware":  row["hardware"],
+                "date":      row.get("date", ""),
+            }
+        elif row.get("date"):
+            # Keep the most recent date seen for this config.
+            if row["date"] > configs[key]["date"]:
+                configs[key]["date"] = row["date"]
+
+    result = [(configs[k], dict(groups[k])) for k in groups]
+    result.sort(key=lambda x: sort_key(x[0]))
+    return result
+
+
+def hardware_label(hw: str) -> str:
+    return {"t4": "T4", "a10g": "A10G", "unknown": "—"}.get(hw, hw.upper())
+
+
+def provider_label(pv: str) -> str:
+    return {"cpu": "CPU", "cuda": "CUDA", "tensorrt": "TensorRT", "coreml": "CoreML"}.get(pv, pv)
+
+
+def build_table(groups: list[tuple[dict, dict]]) -> str:
+    present = [s for s in SAMPLES if any(s in data for _, data in groups)]
     if not present:
         return "_No results yet._"
 
-    header = "| Config |" + "".join(f" RTF {s} |" for s in present)
-    sep    = "|--------|" + "".join(":-----------:|" for _ in present)
+    rtf_headers = "".join(f" RTF {s} |" for s in present)
+    header = f"| Backend | Precision | Provider | Hardware |{rtf_headers} Date |"
+    sep    = f"|---------|-----------|----------|----------|" + ":-----------:|" * len(present) + "------|"
 
     rows = []
-    for stem, data in configs:
+    for config, data in groups:
         cells = []
         for s in present:
             if s in data and data[s]["rtf"]:
                 rtf = mean(data[s]["rtf"])
-                # Bold values below real-time.
                 cells.append(f"**{rtf:.2f}**" if rtf < 1.0 else f"{rtf:.2f}")
             else:
                 cells.append("—")
-        rows.append(f"| {label_for(stem)} |" + "".join(f" {c} |" for c in cells))
+
+        hw   = hardware_label(config["hardware"])
+        prov = provider_label(config["provider"])
+        date = config["date"] or "—"
+        rows.append(
+            f"| {config['backend']} | {config['precision']} | {prov} | {hw} |"
+            + "".join(f" {c} |" for c in cells)
+            + f" {date} |"
+        )
 
     lines = [header, sep] + rows + [
         "",
         "_RTF < 1.0 = faster-than-real-time. Lower is better._  ",
-        "_To update: run `make bench-csv-cuda` on a T4, then commit `bench/results/`._",
+        "_To update: run `make bench-csv-cuda` on target hardware, then commit `bench/results/`._",
     ]
     return "\n".join(lines)
 
 
 def update_readme(table: str, check: bool = False) -> bool:
-    """Replace the section between markers.  Returns True if the file changed."""
     text = README.read_text()
     pattern = re.compile(
         re.escape(START_MARKER) + r".*?" + re.escape(END_MARKER),
@@ -111,22 +169,15 @@ def main():
         print("No CSV files found in bench/results/ — nothing to do.", file=sys.stderr)
         sys.exit(0)
 
-    configs = []
+    all_rows = []
     for path in csvs:
         try:
-            configs.append((path.stem, read_csv(path)))
+            all_rows.extend(read_csv(path))
         except Exception as exc:
             print(f"warning: skipping {path.name}: {exc}", file=sys.stderr)
 
-    def sort_key(item):
-        try:
-            return (SORT_ORDER.index(item[0]), item[0])
-        except ValueError:
-            return (len(SORT_ORDER), item[0])
-
-    configs.sort(key=sort_key)
-
-    table = build_table(configs)
+    groups = group_rows(all_rows)
+    table = build_table(groups)
     changed = update_readme(table, check=check_mode)
 
     if check_mode:
