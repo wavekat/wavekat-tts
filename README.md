@@ -90,12 +90,30 @@ cargo run --example synthesize --features qwen3-tts -- --precision fp32 "Hello"
 cargo run --example synthesize --features qwen3-tts -- --model-dir /path/to/model --output hello.wav "Hello"
 ```
 
+## Try it on Google Colab
+
+No local GPU needed — run Qwen3-TTS on a free T4 in the browser:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1qtc6lAk9RsAsvF1ojft0ACO2-PzFX4pi?usp=sharing)
+
 ## Feature flags
+
+### Backends
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `qwen3-tts` | off | Qwen3-TTS local ONNX inference |
 | `cosyvoice` | off | CosyVoice local ONNX inference (planned) |
+
+### Execution providers
+
+Composable with any backend flag. Selects the inference hardware at build time.
+
+| Flag | Description |
+|------|-------------|
+| `cuda` | NVIDIA CUDA GPU |
+| `tensorrt` | NVIDIA TensorRT |
+| `coreml` | Apple CoreML (macOS) |
 
 WAV I/O (`write_wav` / `from_wav`) is provided by `wavekat-core` via its `wav` feature flag.
 
