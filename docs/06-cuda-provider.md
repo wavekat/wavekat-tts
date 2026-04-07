@@ -166,15 +166,15 @@ import onnxruntime, os
 capi_dir = os.path.join(os.path.dirname(onnxruntime.__file__), "capi")
 so_versioned = os.path.join(capi_dir, f"libonnxruntime.so.{onnxruntime.__version__}")
 
-# ort-sys build script needs libonnxruntime.so (unversioned)
-so_plain = os.path.join(capi_dir, "libonnxruntime.so")
-if os.path.exists(so_versioned) and not os.path.exists(so_plain):
-    os.symlink(so_versioned, so_plain)
-
-# runtime linker resolves the ELF SONAME libonnxruntime.so.1 (major version)
-so_major = os.path.join(capi_dir, "libonnxruntime.so.1")
-if os.path.exists(so_versioned) and not os.path.exists(so_major):
-    os.symlink(so_versioned, so_major)
+# Force-create symlinks — os.path.lexists catches stale/broken symlinks
+# that os.path.exists would miss (e.g. left over from a previous ORT version).
+for link in [
+    os.path.join(capi_dir, "libonnxruntime.so"),    # ort-sys build script
+    os.path.join(capi_dir, "libonnxruntime.so.1"),  # runtime ELF SONAME
+]:
+    if os.path.lexists(link):
+        os.remove(link)
+    os.symlink(so_versioned, link)
 
 os.environ["ORT_STRATEGY"]            = "system"
 os.environ["ORT_LIB_LOCATION"]        = capi_dir
