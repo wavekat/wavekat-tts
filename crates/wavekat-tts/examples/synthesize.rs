@@ -20,7 +20,8 @@
 //!   /instruct               Reset instruction to default
 //!   /status                 Show current settings
 //!   /help                   Show this command list
-//!   Empty line or Ctrl-D    Quit
+//!   /quit                   Quit
+//!   Ctrl-C                  Quit
 //!
 //! Example:
 //!   cargo run --example synthesize --features qwen3-tts -- "Hello, world!"
@@ -144,7 +145,7 @@ fn run_interactive(
         .flat_map(|v| v.languages)
         .collect();
 
-    eprintln!("Interactive mode. Type text to synthesize, /help for commands, empty line to quit.");
+    eprintln!("Interactive mode. Type text to synthesize, /help for commands, /quit or Ctrl-C to quit.");
     eprintln!("  language={language}  instruction=\"{instruction}\"");
 
     let stdin = io::stdin();
@@ -160,7 +161,7 @@ fn run_interactive(
         }
         let input = line.trim();
         if input.is_empty() {
-            break;
+            continue;
         }
 
         if let Some(rest) = input.strip_prefix('/') {
@@ -196,6 +197,7 @@ fn run_interactive(
                     eprintln!("  instruction=\"{instruction}\"");
                     eprintln!("  supported languages: {}", supported_langs.join(", "));
                 }
+                "quit" | "exit" | "q" => break,
                 "help" => {
                     eprintln!("  /lang <code>        Switch language");
                     eprintln!("  /langs              List supported language codes");
@@ -203,7 +205,7 @@ fn run_interactive(
                     eprintln!("  /instruct           Reset instruction to default");
                     eprintln!("  /status             Show current settings");
                     eprintln!("  /help               Show this help");
-                    eprintln!("  Empty line          Quit");
+                    eprintln!("  /quit               Quit (or Ctrl-C)");
                 }
                 other => eprintln!("unknown command: /{other}  (type /help for commands)"),
             }
