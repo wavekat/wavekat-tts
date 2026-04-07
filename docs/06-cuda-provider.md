@@ -134,7 +134,24 @@ os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + ":" + os.environ["PATH
 !rustc --version
 ```
 
-### 3. Clone and build
+### 3. Install ORT system libraries
+
+The prebuilt ORT binaries bundled by `ort-sys` (CUDA variant) require glibc 2.38+,
+but Colab runs Ubuntu 22.04 (glibc 2.35). Use `ORT_STRATEGY=system` with the
+pip-installed `onnxruntime-gpu`, which is compiled for Ubuntu 22.04:
+
+```python
+!pip install -q onnxruntime-gpu==1.20.1
+
+import onnxruntime, os
+os.environ["ORT_STRATEGY"] = "system"
+os.environ["ORT_LIB_LOCATION"] = os.path.dirname(onnxruntime.__file__)
+```
+
+These env vars must be set before `cargo build` so that `ort-sys` finds the
+system ORT instead of downloading its own prebuilt binaries.
+
+### 5. Clone and build
 
 ```python
 !git clone https://github.com/wavekat/wavekat-tts.git
@@ -142,7 +159,7 @@ os.environ["PATH"] = os.path.expanduser("~/.cargo/bin") + ":" + os.environ["PATH
 !cargo build --release --features "qwen3-tts,cuda"
 ```
 
-### 4. Model weights
+### 6. Model weights
 
 The HF Hub downloader will fetch weights automatically on first run.
 To persist across sessions, mount Google Drive and set `WAVEKAT_MODEL_DIR`:
@@ -159,7 +176,7 @@ os.environ["WAVEKAT_MODEL_DIR"] = "/content/drive/MyDrive/wavekat-models"
   --text "Hello from GPU" --out /content/output.wav
 ```
 
-### 5. Download output
+### 7. Download output
 
 ```python
 from google.colab import files
