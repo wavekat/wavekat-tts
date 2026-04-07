@@ -2,8 +2,8 @@
 
 ## Status
 
-**In progress** — the `cuda` Cargo feature is being wired up.
-CPU inference already works; this adds NVIDIA GPU acceleration via ORT's CUDA EP.
+**Implemented** — `cuda`, `tensorrt`, and `coreml` Cargo features are available.
+Select the provider at load time via `ModelConfig::with_execution_provider`.
 
 ## Goal
 
