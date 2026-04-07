@@ -140,6 +140,8 @@ The prebuilt ORT binaries bundled by `ort-sys` (CUDA variant) require glibc 2.38
 but Colab runs Ubuntu 22.04 (glibc 2.35). Use `ORT_STRATEGY=system` with the
 pip-installed `onnxruntime-gpu`, which is compiled for Ubuntu 22.04:
 
+**Notebook cell:**
+
 ```python
 !pip install -q onnxruntime-gpu==1.20.1
 
@@ -157,6 +159,19 @@ if os.path.exists(so_versioned) and not os.path.exists(so_plain):
 os.environ["ORT_STRATEGY"]     = "system"
 os.environ["ORT_LIB_LOCATION"] = capi_dir
 os.environ["LD_LIBRARY_PATH"]  = capi_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+```
+
+**Terminal (Colab shell):**
+
+```bash
+pip install -q onnxruntime-gpu==1.20.1
+
+CAPI=/usr/local/lib/python3.12/dist-packages/onnxruntime/capi
+ln -sf $CAPI/libonnxruntime.so.1.20.1 $CAPI/libonnxruntime.so
+
+export ORT_STRATEGY=system
+export ORT_LIB_LOCATION=$CAPI
+export LD_LIBRARY_PATH=$CAPI:$LD_LIBRARY_PATH
 ```
 
 These env vars must be set before `cargo build` so that `ort-sys` finds the
