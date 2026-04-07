@@ -77,8 +77,9 @@ impl Model {
     /// - `model_dir/{int4,fp32}/talker_prefill.onnx` (+ .data), etc.
     /// - `model_dir/embeddings/text_embedding.npy`, etc.
     pub fn load(model_dir: &Path, config: &super::ModelConfig) -> Result<Self, TtsError> {
+        let onnx_dir = prepare_onnx_dir(&model_dir.join(config.precision.subdir()))?;
         let load_session = |name: &str| -> Result<Session, TtsError> {
-            let path = model_dir.join(config.precision.subdir()).join(name);
+            let path = onnx_dir.join(name);
             let builder = Session::builder()
                 .map_err(|e| TtsError::Model(format!("session builder error: {e}")))?;
             apply_execution_provider(builder, config.execution_provider)?
@@ -630,6 +631,50 @@ impl Model {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Ensure ORT can load ONNX models with external data from `onnx_dir`.
+///
+/// HuggingFace Hub snapshot directories store files as symlinks into a
+/// `blobs/` directory.  ORT's external-data path validation resolves symlinks
+/// and rejects any `.onnx.data` file whose real path escapes the model
+/// directory, even though the symlink itself sits right next to the `.onnx`.
+///
+/// When symlinks are detected, this function creates a sibling directory
+/// (`{onnx_dir}.ort`) populated with hard links to the same inodes.  Hard
+/// links are free (no data is copied) and have no symlink targets, so ORT's
+/// validation passes.  Falls back to a full copy only when hard links are not
+/// supported (cross-device mount).
+///
+/// Returns `onnx_dir` unchanged if no symlinks are present.
+fn prepare_onnx_dir(onnx_dir: &Path) -> Result<std::path::PathBuf, TtsError> {
+    let entries: Vec<_> = std::fs::read_dir(onnx_dir)
+        .map_err(|e| TtsError::Model(format!("cannot read {}: {e}", onnx_dir.display())))?
+        .filter_map(|e| e.ok())
+        .collect();
+
+    let has_symlinks = entries.iter().any(|e| e.path().is_symlink());
+    if !has_symlinks {
+        return Ok(onnx_dir.to_path_buf());
+    }
+
+    let resolved = onnx_dir.with_extension("ort");
+    std::fs::create_dir_all(&resolved)
+        .map_err(|e| TtsError::Model(format!("cannot create {}: {e}", resolved.display())))?;
+
+    for entry in &entries {
+        let src = entry.path();
+        let dst = resolved.join(entry.file_name());
+        if dst.exists() {
+            continue;
+        }
+        if std::fs::hard_link(&src, &dst).is_err() {
+            std::fs::copy(&src, &dst)
+                .map_err(|e| TtsError::Model(format!("cannot copy {}: {e}", src.display())))?;
+        }
+    }
+
+    Ok(resolved)
+}
 
 /// Register the requested execution provider on a session builder.
 ///
