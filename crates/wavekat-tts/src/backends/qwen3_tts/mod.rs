@@ -32,7 +32,11 @@ use crate::error::TtsError;
 use crate::traits::TtsBackend;
 use crate::types::{SynthesizeRequest, VoiceInfo};
 
+use std::sync::Once;
+
 use tokenizer::{IM_END, IM_START, NEWLINE};
+
+static WARNED_NO_INSTRUCTION: Once = Once::new();
 
 mod download;
 mod model;
@@ -167,11 +171,13 @@ impl TtsBackend for Qwen3Tts {
         let language = request.language.unwrap_or("en");
 
         if request.instruction.is_none() {
-            eprintln!(
-                "wavekat-tts warning: Qwen3-TTS is a VoiceDesign model — \
-                 synthesize quality may be inconsistent without a style instruction. \
-                 Set `SynthesizeRequest::with_instruction` to control voice style."
-            );
+            WARNED_NO_INSTRUCTION.call_once(|| {
+                eprintln!(
+                    "wavekat-tts warning: Qwen3-TTS is a VoiceDesign model — \
+                     synthesize quality may be inconsistent without a style instruction. \
+                     Set `SynthesizeRequest::with_instruction` to control voice style."
+                );
+            });
         }
 
         let instruction_tokens = if let Some(instr) = request.instruction {
