@@ -6,6 +6,7 @@
 //! Options:
 //!   --model-dir <PATH>      Model directory (default: auto-download to cache)
 //!   --precision <PREC>      Model precision: int4 (default) or fp32
+//!   --provider <EP>         Execution provider: cpu (default), cuda, tensorrt, coreml
 //!   --language <LANG>       Language code (default: en)
 //!   --instruction <TEXT>    Voice style instruction (VoiceDesign prompt)
 //!                           Default: "Speak naturally and clearly."
@@ -29,7 +30,7 @@
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
-use wavekat_tts::backends::qwen3_tts::{ModelConfig, ModelPrecision, Qwen3Tts};
+use wavekat_tts::backends::qwen3_tts::{ExecutionProvider, ModelConfig, ModelPrecision, Qwen3Tts};
 use wavekat_tts::{SynthesizeRequest, TtsBackend};
 
 const DEFAULT_INSTRUCTION: &str = "Speak naturally and clearly.";
@@ -39,6 +40,7 @@ fn main() {
 
     let mut model_dir: Option<PathBuf> = None;
     let mut precision = ModelPrecision::Int4;
+    let mut provider = ExecutionProvider::Cpu;
     let mut language = "en".to_string();
     let mut instruction: Option<String> = None;
     let mut output = PathBuf::from("output.wav");
@@ -59,6 +61,19 @@ fn main() {
                     "fp32" => ModelPrecision::Fp32,
                     other => {
                         eprintln!("error: unknown precision \"{other}\", expected int4 or fp32");
+                        std::process::exit(1);
+                    }
+                };
+            }
+            "--provider" => {
+                i += 1;
+                provider = match args[i].as_str() {
+                    "cpu"      => ExecutionProvider::Cpu,
+                    "cuda"     => ExecutionProvider::Cuda,
+                    "tensorrt" => ExecutionProvider::TensorRt,
+                    "coreml"   => ExecutionProvider::CoreMl,
+                    other => {
+                        eprintln!("error: unknown provider \"{other}\", expected cpu, cuda, tensorrt, or coreml");
                         std::process::exit(1);
                     }
                 };
@@ -86,6 +101,7 @@ fn main() {
         eprintln!("Usage: synthesize [OPTIONS] [TEXT]");
         eprintln!("  --model-dir <PATH>       Model directory (default: auto-download)");
         eprintln!("  --precision <PREC>       Model precision: int4 (default) or fp32");
+        eprintln!("  --provider <EP>          Execution provider: cpu (default), cuda, tensorrt, coreml");
         eprintln!("  --language <LANG>        Language code (default: en)");
         eprintln!("  --instruction <TEXT>     Voice style instruction (VoiceDesign prompt)");
         eprintln!("                           Default: \"{DEFAULT_INSTRUCTION}\"");
@@ -100,7 +116,9 @@ fn main() {
     }
 
     eprintln!("Loading model ...");
-    let mut config = ModelConfig::default().with_precision(precision);
+    let mut config = ModelConfig::default()
+        .with_precision(precision)
+        .with_execution_provider(provider);
     if let Some(dir) = model_dir {
         config = config.with_dir(dir);
     }
