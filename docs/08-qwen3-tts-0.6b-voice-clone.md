@@ -176,10 +176,13 @@ Add to `tools/qwen3-tts-onnx/`:
 6. `Makefile` — add a `MODEL_PRESET = clone-0.6b` switch (or just document
    `make all MODEL_ID=Qwen/Qwen3-TTS-12Hz-0.6B-Base OUTPUT_DIR=...`).
 
-The published HF repo will be `wavekat/Qwen3-TTS-0.6B-Base-ONNX` (new), with
-the same `int4/`, `fp32/`, `embeddings/`, `tokenizer/` layout plus a top-level
-`speaker_encoder.onnx` and `tokenizer_encoder.onnx`. (Both files apply equally
-to either precision; no need to duplicate.)
+The published HF repo will be `wavekat/Qwen3-TTS-0.6B-Base-ONNX` (new — kept
+separate from the existing 1.7B repo since it's a different checkpoint and
+ships extra modules), with the same `int4/`, `fp32/`, `embeddings/`,
+`tokenizer/` layout plus a top-level `speaker_encoder.onnx` and
+`tokenizer_encoder.onnx`. The two encoders ship as **FP32 only** — they're
+small (≪ 100 MB combined) and we don't want to risk quality loss on the
+condition signal.
 
 ## Rust backend changes
 
@@ -198,18 +201,10 @@ src/backends/qwen3_tts/
 
 ### Public API
 
-Two options. We pick **(B)** to keep the trait surface clean and avoid leaking
-clone-only state into the existing struct.
+Sibling struct + dedicated request type. Keeps the existing `Qwen3Tts` /
+`TtsBackend` surface untouched and avoids smuggling reference-clip state
+through `SynthesizeRequest`.
 
-(A) Single struct, runtime mode flag:
-```rust
-let tts = Qwen3Tts::from_config(ModelConfig::default()
-    .with_variant(ModelVariant::Clone06B));
-let req = SynthesizeRequest::new("Hello").with_reference(ref_audio, "ref text");
-tts.synthesize(&req)?;
-```
-
-(B) Sibling struct, dedicated request type — chosen:
 ```rust
 use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneConfig, CloneRequest};
 
@@ -328,14 +323,14 @@ fn main() -> anyhow::Result<()> {
   non-streaming to match the existing VoiceDesign path
 - True batch inference
 
-## Open questions
+## Decisions locked
 
-1. **Single struct vs sibling struct?** Drafting both APIs; will pick one in
-   review. Currently leaning sibling (`Qwen3TtsClone`).
-2. **Ship speaker/tokenizer encoders as INT4?** They are small (≪ 100 MB FP32).
-   Probably keep FP32 to avoid quality loss; revisit if size matters.
-3. **Re-use the existing 1.7B HF repo or publish a fresh `0.6B-Base-ONNX`?**
-   New repo is cleaner — different model, different weights. Confirmed: new.
+1. **API shape**: sibling struct `Qwen3TtsClone` + `CloneRequest`. Existing
+   `Qwen3Tts` and `TtsBackend` unchanged.
+2. **Speaker / tokenizer encoder precision**: FP32 only. They're small and
+   sit on the conditioning path — no upside to quantizing.
+3. **HF repo**: publish a fresh `wavekat/Qwen3-TTS-0.6B-Base-ONNX`. Do not
+   reuse the 1.7B repo.
 
 [hf-base]: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base
 [gen_clone]: https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py
