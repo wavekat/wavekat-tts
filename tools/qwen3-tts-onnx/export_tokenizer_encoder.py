@@ -16,15 +16,18 @@ Pipeline (as in qwen_tts.inference.qwen3_tts_tokenizer.Qwen3TTSTokenizer.encode)
 
 We expose the same signature in ONNX:
 
-  Input :  waveform `(B, T)` float32, 24 kHz
-  Output:  audio_codes `(B, num_valid, frames)` int64
+  Input :  waveform `(1, FIXED_SAMPLES)` float32, 24 kHz
+  Output:  audio_codes `(1, num_valid, frames)` int64
 
-Padding-mask trimming is *not* baked in — host code passes the actual sample
-count and trims the trailing tail itself if needed. For voice cloning we
-encode whole short clips (no batching), so padding doesn't matter.
+NOTE: The Mimi encoder uses data-dependent conv padding (`.item()` in
+`_get_extra_padding_for_conv1d`), which makes `torch.export` / dynamo fail
+on dynamic shapes. We therefore use the **legacy JIT tracer** with a fixed
+canonical sample length. Host code must zero-pad (or truncate) the reference
+waveform to exactly `CANONICAL_SAMPLES` before feeding it to the ONNX session,
+and trim trailing code frames based on the original audio length.
 
-The dynamo exporter handles the Mimi encoder's dynamic conv shapes correctly;
-the legacy JIT trace bakes them as constants and breaks dynamic T.
+The encoder only runs *once per reference clip* (not in the autoregressive
+loop), so the fixed-size constraint has no performance impact.
 """
 
 import argparse
@@ -37,12 +40,19 @@ import torch.nn as nn
 
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 
+# Canonical sample count: 10 s × 24 kHz = 240 000 samples.
+# Covers reference clips up to 10 seconds. Shorter clips are zero-padded;
+# the host code trims the output codes based on the original sample count.
+CANONICAL_SECONDS = 10
+CANONICAL_SR = 24000
+CANONICAL_SAMPLES = CANONICAL_SECONDS * CANONICAL_SR  # 240_000
+
 
 class TokenizerEncoderWrapper(nn.Module):
     """Wraps `Qwen3TTSTokenizerV2Encoder` (a `MimiModel` subclass).
 
     Calls the inner encoder's `.encode()` and slices to the valid quantizer
-    count. We keep batch dim and frame dim dynamic; the rest is static.
+    count. Input is a fixed-length waveform; output is the code matrix.
     """
 
     def __init__(self, encoder, num_valid_quantizers: int):
@@ -50,7 +60,7 @@ class TokenizerEncoderWrapper(nn.Module):
         self.encoder = encoder
         self.num_valid = num_valid_quantizers
 
-    def forward(self, waveform):  # (B, T) float32
+    def forward(self, waveform):  # (1, CANONICAL_SAMPLES) float32
         # Mimi encoder expects (B, 1, T)
         encoded = self.encoder.encode(
             input_values=waveform.unsqueeze(1),
@@ -84,53 +94,52 @@ def export_tokenizer_encoder(model_id: str, output_dir: str):
         f"  Tokenizer encoder: input_sr={input_sr}, "
         f"downsample={encode_downsample}, num_valid_quantizers={num_valid}"
     )
+    assert input_sr == CANONICAL_SR, (
+        f"Expected input_sr={CANONICAL_SR}, got {input_sr}. "
+        f"Update CANONICAL_SR in this script."
+    )
 
     wrapper = TokenizerEncoderWrapper(encoder, num_valid)
     wrapper.eval()
 
-    # Trace with ~3 s of audio at the encoder's input sample rate.
-    # 3 s × 24 kHz = 72_000 samples; round to a multiple of the downsample rate.
-    target_samples = 3 * input_sr
-    target_samples -= target_samples % encode_downsample
-    dummy_wav = torch.randn(1, target_samples, dtype=torch.float32) * 0.1
-    print(f"  Tracing with waveform shape {tuple(dummy_wav.shape)} (~3 s @ {input_sr} Hz)")
+    dummy_wav = torch.randn(1, CANONICAL_SAMPLES, dtype=torch.float32) * 0.1
+    expected_frames = CANONICAL_SAMPLES // encode_downsample
+    print(
+        f"  Fixed trace size: {CANONICAL_SAMPLES} samples "
+        f"({CANONICAL_SECONDS}s @ {CANONICAL_SR} Hz) → {expected_frames} code frames"
+    )
 
     onnx_path = os.path.join(output_dir, "tokenizer_encoder.onnx")
     os.makedirs(output_dir, exist_ok=True)
 
     pre_export = set(os.listdir(output_dir)) if os.path.exists(output_dir) else set()
 
-    # Use dynamo for clean dynamic-shape support through the conv stack.
-    batch_dim = torch.export.Dim("batch", min=1, max=8)
-    samples_dim = torch.export.Dim("samples", min=encode_downsample, max=20 * input_sr)
-    # Dynamo requires the dynamic dim to be divisible by the encoder downsample.
-    # We can't express divisibility at dim level, so we just trust callers.
-    dynamic_shapes = {"waveform": {0: batch_dim, 1: samples_dim}}
-
-    print("\nExporting tokenizer_encoder.onnx (dynamo, dynamic batch + samples) ...")
+    # Legacy JIT tracer — no dynamic shapes. The Mimi encoder's conv padding
+    # uses .item() which creates data-dependent guards incompatible with dynamo.
+    print(
+        f"\nExporting tokenizer_encoder.onnx "
+        f"(JIT trace, fixed T={CANONICAL_SAMPLES}) ..."
+    )
     with torch.no_grad():
         torch.onnx.export(
             wrapper,
             (dummy_wav,),
             onnx_path,
-            dynamo=True,
+            opset_version=17,
+            dynamo=False,
             input_names=["waveform"],
             output_names=["audio_codes"],
-            dynamic_shapes=dynamic_shapes,
         )
 
     _try_consolidate(onnx_path, pre_export)
     print(f"  Saved: {onnx_path}")
 
     _validate(wrapper, dummy_wav, onnx_path)
-    # Validate at a couple of other lengths to confirm dynamic axes hold.
-    for sec in (1, 5):
-        n = sec * input_sr
-        n -= n % encode_downsample
-        test_wav = torch.randn(1, n, dtype=torch.float32) * 0.1
-        _validate(wrapper, test_wav, onnx_path, label=f"{sec}s")
 
-    print("\nTokenizer encoder export complete.")
+    print(f"\nTokenizer encoder export complete.")
+    print(f"  IMPORTANT: host code must zero-pad waveforms to exactly {CANONICAL_SAMPLES}")
+    print(f"  samples ({CANONICAL_SECONDS}s @ {CANONICAL_SR} Hz) before inference,")
+    print(f"  then trim output codes to ceil(original_samples / {encode_downsample}) frames.")
 
 
 def _try_consolidate(onnx_path: str, pre_export_files: set | None = None):
