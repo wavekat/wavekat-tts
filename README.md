@@ -23,6 +23,14 @@ Same pattern as
 | [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | ✅ Available | Apache 2.0 |
 | [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | 🚧 Planned | Apache 2.0 |
 
+## Model weights
+
+ONNX-converted weights are published under the [`wavekat`](https://huggingface.co/wavekat) organization on Hugging Face.
+
+| Backend | Repository | Precision |
+|---------|------------|-----------|
+| Qwen3-TTS | [wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX](https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX) | FP32, INT4 |
+
 ## Quick start
 
 ```sh
@@ -101,14 +109,6 @@ cargo run --example synthesize --features qwen3-tts -- --model-dir /path/to/mode
 _RTF < 1.0 = faster-than-real-time. Lower is better._  
 _To update: run `make bench-csv-cuda` on target hardware, then commit `bench/results/`._
 <!-- bench:end -->
-
-## Model weights
-
-ONNX-converted weights are published under the [`wavekat`](https://huggingface.co/wavekat) organization on Hugging Face.
-
-| Backend | Repository | Precision |
-|---------|------------|-----------|
-| Qwen3-TTS | [wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX](https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX) | FP32, INT4 |
 
 ## Feature flags
 
