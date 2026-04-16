@@ -5,7 +5,7 @@ PYTHON ?= .venv/bin/python
 FP32_DIR = $(OUTPUT_DIR)/fp32
 INT4_DIR = $(OUTPUT_DIR)/int4
 
-.PHONY: all venv export embeddings talker code-predictor vocoder speaker-encoder tokenizer-encoder validate validate-int4 quantize hf generate generate-int4 generate-zh generate-zh-int4 clean help help-clone clone-all clone-export clone-base-preset
+.PHONY: all venv export embeddings talker code-predictor vocoder speaker-encoder tokenizer-encoder validate validate-int4 quantize hf generate generate-int4 generate-zh generate-zh-int4 clean help clone-all clone-export clone-base-preset
 
 help: ## Show this help
 	@echo "Qwen3-TTS ONNX Export & Quantization Toolkit"
@@ -18,6 +18,8 @@ help: ## Show this help
 	@echo "Variables:"
 	@echo "  MODEL_ID             HuggingFace model ID (default: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)"
 	@echo "  OUTPUT_DIR           Output directory (default: ./output/qwen3-tts-1.7b-voicedesign)"
+	@echo "  CLONE_MODEL_ID       Voice clone model ID (default: Qwen/Qwen3-TTS-12Hz-0.6B-Base)"
+	@echo "  CLONE_OUTPUT_DIR     Voice clone output dir (default: ./output/qwen3-tts-0.6b-base)"
 	@echo "  PYTHON               Python interpreter (default: .venv/bin/python)"
 
 venv: ## Create virtualenv and install dependencies
@@ -114,13 +116,3 @@ clone-export: ## Export all ONNX models for the 0.6B Base voice clone variant
 
 clone-base-preset: ## INT4 quantize the talker/CP for the 0.6B Base build (encoders stay FP32)
 	$(MAKE) quantize MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
-
-help-clone: ## Show 0.6B voice clone targets
-	@echo "0.6B Base voice clone targets:"
-	@echo "  clone-export        Export talker / CP / vocoder / speaker / tokenizer encoders"
-	@echo "  clone-base-preset   INT4 quantize talker + CP (encoders stay FP32)"
-	@echo "  clone-all           clone-export + clone-base-preset"
-	@echo ""
-	@echo "Variables:"
-	@echo "  CLONE_MODEL_ID      (default $(CLONE_MODEL_ID))"
-	@echo "  CLONE_OUTPUT_DIR    (default $(CLONE_OUTPUT_DIR))"
