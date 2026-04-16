@@ -62,6 +62,14 @@ Set `WAVEKAT_MODEL_DIR` to load from a local directory and skip all downloads.
 All backends produce `AudioFrame<'static>` from [`wavekat-core`](https://github.com/wavekat/wavekat-core) — the same
 type consumed by `wavekat-vad` and `wavekat-turn`.
 
+## Model weights
+
+ONNX-converted weights are published under the [`wavekat`](https://huggingface.co/wavekat) organization on Hugging Face.
+
+| Backend | Repository | Precision |
+|---------|------------|-----------|
+| Qwen3-TTS | [wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX](https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX) | FP32, INT4 |
+
 ## Architecture
 
 ```
