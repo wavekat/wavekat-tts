@@ -5,7 +5,7 @@ PYTHON ?= .venv/bin/python
 FP32_DIR = $(OUTPUT_DIR)/fp32
 INT4_DIR = $(OUTPUT_DIR)/int4
 
-.PHONY: all venv export embeddings talker code-predictor vocoder validate validate-int4 quantize hf generate generate-int4 generate-zh generate-zh-int4 clean help
+.PHONY: all venv export embeddings talker code-predictor vocoder speaker-encoder tokenizer-encoder validate validate-int4 quantize hf generate generate-int4 generate-zh generate-zh-int4 clean help help-clone clone-all clone-export clone-base-preset
 
 help: ## Show this help
 	@echo "Qwen3-TTS ONNX Export & Quantization Toolkit"
@@ -39,6 +39,12 @@ code-predictor: ## Export code predictor ONNX model
 
 vocoder: ## Export vocoder ONNX model
 	$(PYTHON) export_vocoder.py --model-id $(MODEL_ID) --output-dir $(OUTPUT_DIR)
+
+speaker-encoder: ## Export ECAPA-TDNN speaker encoder ONNX (Base models only)
+	$(PYTHON) export_speaker_encoder.py --model-id $(MODEL_ID) --output-dir $(OUTPUT_DIR)
+
+tokenizer-encoder: ## Export speech-tokenizer encoder ONNX (Base models only)
+	$(PYTHON) export_tokenizer_encoder.py --model-id $(MODEL_ID) --output-dir $(OUTPUT_DIR)
 
 validate: ## Validate ONNX exports against PyTorch
 	$(PYTHON) validate.py --model-id $(MODEL_ID) --onnx-dir $(OUTPUT_DIR)
@@ -85,3 +91,36 @@ generate-zh-int4: ## Generate Chinese sample audio (INT4)
 
 clean: ## Remove output directory
 	rm -rf $(OUTPUT_DIR)
+
+# ---------------------------------------------------------------------------
+# 0.6B Base voice clone preset
+#
+# Same export scripts as VoiceDesign, plus the two extra encoders. Pin to a
+# separate output directory so 1.7B and 0.6B builds don't stomp each other.
+# ---------------------------------------------------------------------------
+
+CLONE_MODEL_ID  ?= Qwen/Qwen3-TTS-12Hz-0.6B-Base
+CLONE_OUTPUT_DIR ?= ./output/qwen3-tts-0.6b-base
+
+clone-all: clone-export clone-base-preset ## Full 0.6B Base voice clone export + INT4 (no validate yet)
+
+clone-export: ## Export all ONNX models for the 0.6B Base voice clone variant
+	$(MAKE) embeddings        MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	$(MAKE) talker            MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	$(MAKE) code-predictor    MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	$(MAKE) vocoder           MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	$(MAKE) speaker-encoder   MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	$(MAKE) tokenizer-encoder MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+
+clone-base-preset: ## INT4 quantize the talker/CP for the 0.6B Base build (encoders stay FP32)
+	$(MAKE) quantize MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+
+help-clone: ## Show 0.6B voice clone targets
+	@echo "0.6B Base voice clone targets:"
+	@echo "  clone-export        Export talker / CP / vocoder / speaker / tokenizer encoders"
+	@echo "  clone-base-preset   INT4 quantize talker + CP (encoders stay FP32)"
+	@echo "  clone-all           clone-export + clone-base-preset"
+	@echo ""
+	@echo "Variables:"
+	@echo "  CLONE_MODEL_ID      (default $(CLONE_MODEL_ID))"
+	@echo "  CLONE_OUTPUT_DIR    (default $(CLONE_OUTPUT_DIR))"
