@@ -107,12 +107,20 @@ CLONE_OUTPUT_DIR ?= ./output/qwen3-tts-0.6b-base
 clone-all: clone-export clone-base-preset ## Full 0.6B Base voice clone export + INT4 (no validate yet)
 
 clone-export: ## Export all ONNX models for the 0.6B Base voice clone variant
+	@echo "\n[1/6] Embeddings, config, tokenizer ..."
 	$(MAKE) embeddings        MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[2/6] Talker prefill + decode ..."
 	$(MAKE) talker            MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[3/6] Code predictor ..."
 	$(MAKE) code-predictor    MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[4/6] Vocoder ..."
 	$(MAKE) vocoder           MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[5/6] Speaker encoder (ECAPA-TDNN) ..."
 	$(MAKE) speaker-encoder   MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[6/6] Tokenizer encoder (Mimi) ..."
 	$(MAKE) tokenizer-encoder MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\nAll 0.6B Base clone exports complete."
 
 clone-base-preset: ## INT4 quantize the talker/CP for the 0.6B Base build (encoders stay FP32)
+	@echo "\nQuantizing talker + CP to INT4 (speaker/tokenizer encoders stay FP32) ..."
 	$(MAKE) quantize MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)

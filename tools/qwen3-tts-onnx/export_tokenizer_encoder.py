@@ -39,6 +39,7 @@ import torch
 import torch.nn as nn
 
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
+from mask_patch import patch_causal_mask
 
 # Canonical sample count: 10 s × 24 kHz = 240 000 samples.
 # Covers reference clips up to 10 seconds. Shorter clips are zero-padded;
@@ -71,6 +72,10 @@ class TokenizerEncoderWrapper(nn.Module):
 
 
 def export_tokenizer_encoder(model_id: str, output_dir: str):
+    # Mimi's encoder_transformer uses create_causal_mask which calls torch.vmap,
+    # incompatible with JIT tracing. Patch it the same way as the talker export.
+    patch_causal_mask()
+
     print(f"Loading model: {model_id}")
     model = Qwen3TTSForConditionalGeneration.from_pretrained(
         model_id, dtype=torch.float32, attn_implementation="eager"
