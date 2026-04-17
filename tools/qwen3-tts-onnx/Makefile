@@ -123,6 +123,7 @@ clone-export: ## Export all ONNX models for the 0.6B Base voice clone variant
 
 clone-hf: ## Package 0.6B Base clone output for Hugging Face upload
 	@echo "Packaging 0.6B Base clone for Hugging Face..."
+	cp README_CLONE.md $(CLONE_OUTPUT_DIR)/README.md
 	sed 's|./output/qwen3-tts-0.6b-base|.|' generate_clone_onnx.py > $(CLONE_OUTPUT_DIR)/generate_clone_onnx.py
 	printf 'onnxruntime>=1.24.0\nnumpy>=2.0\nsoundfile>=0.13\ntransformers>=4.57.0\nlibrosa>=0.10\n' > $(CLONE_OUTPUT_DIR)/requirements.txt
 	printf '*.onnx filter=lfs diff=lfs merge=lfs -text\n*.onnx.data filter=lfs diff=lfs merge=lfs -text\n*.npy filter=lfs diff=lfs merge=lfs -text\n' > $(CLONE_OUTPUT_DIR)/.gitattributes
