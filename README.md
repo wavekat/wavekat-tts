@@ -20,7 +20,8 @@ Same pattern as
 
 | Backend | Feature flag | Status | License |
 |---------|-------------|--------|---------|
-| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | `qwen3-tts` | ✅ Available | Apache 2.0 |
+| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) (VoiceDesign 1.7B) | `qwen3-tts` | ✅ Available | Apache 2.0 |
+| [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) (Voice Clone 0.6B) | `qwen3-tts` | ✅ Available | Apache 2.0 |
 | [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | 🚧 Planned | Apache 2.0 |
 
 ## Model weights
@@ -29,7 +30,8 @@ ONNX-converted weights are published under the [`wavekat`](https://huggingface.c
 
 | Backend | Repository | Precision |
 |---------|------------|-----------|
-| Qwen3-TTS | [wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX](https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX) | FP32, INT4 |
+| Qwen3-TTS VoiceDesign | [wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX](https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX) | FP32, INT4 |
+| Qwen3-TTS Voice Clone | [wavekat/Qwen3-TTS-0.6B-Base-ONNX](https://huggingface.co/wavekat/Qwen3-TTS-0.6B-Base-ONNX) | FP32, INT4 |
 
 ## Quick start
 
@@ -37,31 +39,41 @@ ONNX-converted weights are published under the [`wavekat`](https://huggingface.c
 cargo add wavekat-tts --features qwen3-tts
 ```
 
+### VoiceDesign (prompt-based styling)
+
 ```rust
 use wavekat_tts::{TtsBackend, SynthesizeRequest};
-use wavekat_tts::backends::qwen3_tts::{Qwen3Tts, ModelConfig, ModelPrecision, ExecutionProvider};
+use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
 
-// Auto-downloads INT4 model files on first run, runs on CPU (default):
-let tts = Qwen3Tts::new()?;
+fn main() {
+    let tts = Qwen3Tts::new().unwrap(); // auto-downloads INT4 model on first run
 
-// Or FP32 on CPU:
-// let tts = Qwen3Tts::from_config(ModelConfig::default().with_precision(ModelPrecision::Fp32))?;
+    let request = SynthesizeRequest::new("Hello, world")
+        .with_instruction("Speak naturally and clearly.");
+    let audio = tts.synthesize(&request).unwrap();
+    audio.write_wav("output.wav").unwrap();
+}
+```
 
-// Or INT4 from a local directory on CUDA:
-// let tts = Qwen3Tts::from_config(
-//     ModelConfig::default()
-//         .with_dir("models/qwen3-tts-1.7b")
-//         .with_execution_provider(ExecutionProvider::Cuda),
-// )?;
+### Voice Clone (reference-audio cloning)
 
-let request = SynthesizeRequest::new("Hello, world")
-    .with_instruction("Speak naturally and clearly.");
-let audio = tts.synthesize(&request)?;
+```rust
+use wavekat_tts::AudioFrame;
+use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneRequest};
 
-// Save to WAV (wavekat-core includes WAV I/O via the `wav` feature):
-audio.write_wav("output.wav")?;
+fn main() {
+    let tts = Qwen3TtsClone::new().unwrap(); // auto-downloads 0.6B Base model
 
-println!("{}s at {} Hz", audio.duration_secs(), audio.sample_rate());
+    let ref_audio = AudioFrame::from_wav("ref.wav").unwrap(); // 24 kHz mono WAV
+    let req = CloneRequest::new(
+        "Text to say in the cloned voice",
+        ref_audio.samples(),
+        24000,
+        "Transcript of the reference clip.",
+    ).with_language("en");
+    let audio = tts.synthesize_clone(&req).unwrap();
+    audio.write_wav("clone_output.wav").unwrap();
+}
 ```
 
 Model files are cached by the HF Hub client at `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
@@ -92,10 +104,14 @@ Two trait families:
 Generate a WAV file from text (model files are auto-downloaded on first run):
 
 ```sh
+# VoiceDesign (1.7B)
 cargo run --example synthesize --features qwen3-tts -- "Hello, world\!"
 cargo run --example synthesize --features qwen3-tts -- --instruction "Speak in a warm, friendly tone." "Give every small business the voice of a big one."
-cargo run --example synthesize --features qwen3-tts -- --precision fp32 "Hello"
-cargo run --example synthesize --features qwen3-tts -- --model-dir /path/to/model --output hello.wav "Hello"
+
+# Voice Clone (0.6B)
+cargo run --example synthesize_clone --features qwen3-tts -- \
+  --ref-audio ref.wav --ref-text "Transcript of the reference clip." \
+  "Text to synthesize in the cloned voice."
 ```
 
 ## Performance
