@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/wavekat/wavekat-tts/compare/v0.0.2...v0.0.3) - 2026-04-17
+
+### Added
+
+- Qwen3-TTS 0.6B voice clone ([#14](https://github.com/wavekat/wavekat-tts/pull/14))
+
+### Fixed
+
+- auto-resample ref audio to 24 kHz ([#15](https://github.com/wavekat/wavekat-tts/pull/15))
+
+### Other
+
+- add model weights section ([#12](https://github.com/wavekat/wavekat-tts/pull/12))
+
 ## [0.0.2](https://github.com/wavekat/wavekat-tts/compare/v0.0.1...v0.0.2) - 2026-04-07
 
 ### Fixed
