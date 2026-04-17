@@ -104,4 +104,16 @@ def patch_causal_mask():
     except ImportError:
         pass
 
+    # Patch the Mimi encoder model (used by the speech tokenizer encoder).
+    # It has its own `from transformers.masking_utils import create_causal_mask`
+    # local binding that the module-level patch above doesn't reach.
+    try:
+        import transformers.models.mimi.modeling_mimi as mimi_mod
+        if hasattr(mimi_mod, 'create_causal_mask'):
+            mimi_mod.create_causal_mask = simple_causal_mask
+        if hasattr(mimi_mod, 'create_sliding_window_causal_mask'):
+            mimi_mod.create_sliding_window_causal_mask = simple_sliding_window_causal_mask
+    except ImportError:
+        pass
+
     print("  Patched create_causal_mask (vmap-free)")

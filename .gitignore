@@ -6,3 +6,5 @@ Cargo.lock
 dataset/
 models/
 *.wav
+!tools/qwen3-tts-onnx/fixtures/*.wav
+.claude/

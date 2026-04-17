@@ -1,3 +1,11 @@
+//! Voice-clone ONNX pipeline for Qwen3-TTS 0.6B Base.
+//!
+//! Chains 6 ONNX models: tokenizer_encoder → speaker_encoder → talker (prefill
+//! + decode loop) → code_predictor → vocoder.
+//!
+//! Reference audio codes are prepended to the generated codes before vocoding,
+//! then the leading reference portion is trimmed proportionally.
+
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -8,21 +16,23 @@ use wavekat_core::AudioFrame;
 
 use crate::TtsError;
 
+use super::mel::MelSpectrogram;
+use super::model::{
+    apply_execution_provider, load_npy1, load_npy2, prepare_onnx_dir, text_project,
+};
 use super::sampler::{self, SamplerConfig};
 use super::tokenizer::{self, ASSISTANT, IM_START, NEWLINE, TTS_BOS, TTS_EOS, TTS_PAD};
 
-// Codec control token IDs (from config.json)
+// Codec control token IDs (shared across all Qwen3-TTS variants)
 const CODEC_PAD: i64 = 2148;
 const CODEC_BOS: i64 = 2149;
+const CODEC_EOS: i64 = 2150;
 const CODEC_THINK: i64 = 2154;
 const CODEC_THINK_BOS: i64 = 2156;
 const CODEC_THINK_EOS: i64 = 2157;
 
-/// Talker output: (logits, hidden_state, kv_keys, kv_values).
-type TalkerOutput = (Vec<f32>, Array3<f32>, Array5<f32>, Array5<f32>);
-
-// Model dimensions — Qwen3-TTS-12Hz-1.7B-VoiceDesign
-const HIDDEN_DIM: usize = 2048;
+// Model dimensions — Qwen3-TTS-12Hz-0.6B-Base
+const HIDDEN_DIM: usize = 1024;
 const NUM_LAYERS: usize = 28;
 const NUM_KV_HEADS: usize = 8;
 const HEAD_DIM: usize = 128;
@@ -31,10 +41,13 @@ const CP_NUM_LAYERS: usize = 5;
 const CP_NUM_KV_HEADS: usize = 8;
 const NUM_CP_GROUPS: usize = 15; // codebook groups 1-15
 const SAMPLE_RATE: u32 = 24000;
-const CODEC_EOS: i64 = 2150;
 const MAX_NEW_TOKENS: usize = 8192;
 
-/// Sampling defaults from config.json generate_config.
+// Tokenizer encoder constants
+const TOKENIZER_CANONICAL_SAMPLES: usize = 240_000; // 10s @ 24kHz
+const TOKENIZER_DOWNSAMPLE: usize = 1920; // 24000 Hz / 12.5 Hz
+
+/// Sampling defaults from config.json.
 const TALKER_SAMPLER: SamplerConfig = SamplerConfig {
     temperature: 0.9,
     top_k: 50,
@@ -47,39 +60,42 @@ const CP_SAMPLER: SamplerConfig = SamplerConfig {
     repetition_penalty: 1.0,
 };
 
-/// All ONNX sessions and embedding tables needed for inference.
+/// Talker output: (logits, hidden_state, kv_keys, kv_values).
+type TalkerOutput = (Vec<f32>, Array3<f32>, Array5<f32>, Array5<f32>);
+
+/// All ONNX sessions and embedding tables for the 0.6B Base voice clone pipeline.
 ///
-/// Sessions are wrapped in `Mutex` because `Session::run` requires `&mut self`,
-/// while `TtsBackend::synthesize` takes `&self`.
-pub struct Model {
+/// Chains six ONNX models: tokenizer encoder → speaker encoder → talker
+/// (prefill + decode loop) → code predictor → vocoder.
+pub struct CloneModel {
     talker_prefill: Mutex<Session>,
     talker_decode: Mutex<Session>,
     code_predictor: Mutex<Session>,
     vocoder: Mutex<Session>,
+    speaker_encoder: Mutex<Session>,
+    tokenizer_encoder: Mutex<Session>,
 
     // Embedding tables (immutable after construction)
-    text_embedding: Array2<f32>,           // (vocab, 2048)
-    text_proj_fc1_weight: Array2<f32>,     // (2048, 2048)
-    text_proj_fc1_bias: Array1<f32>,       // (2048,)
-    text_proj_fc2_weight: Array2<f32>,     // (2048, 2048)
-    text_proj_fc2_bias: Array1<f32>,       // (2048,)
-    talker_codec_embedding: Array2<f32>,   // (3072, 2048)
-    cp_codec_embeddings: Vec<Array2<f32>>, // 15 × (2048, 2048)
+    text_embedding: Array2<f32>,
+    text_proj_fc1_weight: Array2<f32>,
+    text_proj_fc1_bias: Array1<f32>,
+    text_proj_fc2_weight: Array2<f32>,
+    text_proj_fc2_bias: Array1<f32>,
+    talker_codec_embedding: Array2<f32>,
+    cp_codec_embeddings: Vec<Array2<f32>>,
 
     // Precomputed
-    tts_pad_embed: Array1<f32>, // (2048,) projected tts_pad text embedding
+    tts_pad_embed: Array1<f32>,
+    mel: MelSpectrogram,
 }
 
-impl Model {
-    /// Load all ONNX sessions and embedding tables from `model_dir`.
-    ///
-    /// Expected layout (matches the HF repo):
-    /// - `model_dir/{int4,fp32}/talker_prefill.onnx` (+ .data), etc.
-    /// - `model_dir/embeddings/text_embedding.npy`, etc.
+impl CloneModel {
+    /// Load all 6 ONNX sessions and embedding tables from `model_dir`.
     pub fn load(model_dir: &Path, config: &super::ModelConfig) -> Result<Self, TtsError> {
         let onnx_dir = prepare_onnx_dir(&model_dir.join(config.precision.subdir()))?;
-        let load_session = |name: &str| -> Result<Session, TtsError> {
-            let path = onnx_dir.join(name);
+
+        let load_session = |name: &str, dir: &Path| -> Result<Session, TtsError> {
+            let path = dir.join(name);
             let builder = Session::builder()
                 .map_err(|e| TtsError::Model(format!("session builder error: {e}")))?;
             apply_execution_provider(builder, config.execution_provider)?
@@ -87,23 +103,36 @@ impl Model {
                 .map_err(|e| TtsError::Model(format!("failed to load {name}: {e}")))
         };
 
-        eprint!("Loading talker prefill ... ");
-        let talker_prefill = load_session("talker_prefill.onnx")?;
+        eprint!("Loading talker prefill     ... ");
+        let talker_prefill = load_session("talker_prefill.onnx", &onnx_dir)?;
         eprintln!("done");
 
-        eprint!("Loading talker decode  ... ");
-        let talker_decode = load_session("talker_decode.onnx")?;
+        eprint!("Loading talker decode      ... ");
+        let talker_decode = load_session("talker_decode.onnx", &onnx_dir)?;
         eprintln!("done");
 
-        eprint!("Loading code predictor ... ");
-        let code_predictor = load_session("code_predictor.onnx")?;
+        eprint!("Loading code predictor     ... ");
+        let code_predictor = load_session("code_predictor.onnx", &onnx_dir)?;
         eprintln!("done");
 
-        eprint!("Loading vocoder        ... ");
-        let vocoder = load_session("vocoder.onnx")?;
+        eprint!("Loading vocoder            ... ");
+        let vocoder = load_session("vocoder.onnx", &onnx_dir)?;
         eprintln!("done");
 
-        eprint!("Loading embeddings     ... ");
+        // Speaker encoder and tokenizer encoder are FP32-only, stored at model root.
+        // They have external .data files, so we need prepare_onnx_dir to resolve
+        // HF Hub symlinks (same issue as the talker models).
+        let root_dir = prepare_onnx_dir(model_dir)?;
+
+        eprint!("Loading speaker encoder    ... ");
+        let speaker_encoder = load_session("speaker_encoder.onnx", &root_dir)?;
+        eprintln!("done");
+
+        eprint!("Loading tokenizer encoder  ... ");
+        let tokenizer_encoder = load_session("tokenizer_encoder.onnx", &root_dir)?;
+        eprintln!("done");
+
+        eprint!("Loading embeddings         ... ");
         let text_embedding = load_npy2(model_dir, "embeddings/text_embedding.npy")?;
         let text_proj_fc1_weight =
             load_npy2(model_dir, "embeddings/text_projection_fc1_weight.npy")?;
@@ -120,9 +149,7 @@ impl Model {
                 &format!("embeddings/cp_codec_embedding_{i}.npy"),
             )?);
         }
-
         eprintln!("done");
-        eprintln!("Model ready.");
 
         let tts_pad_raw = text_embedding.row(TTS_PAD as usize).to_owned();
         let tts_pad_embed = text_project(
@@ -133,11 +160,15 @@ impl Model {
             &text_proj_fc2_bias,
         );
 
+        eprintln!("Clone model ready.");
+
         Ok(Self {
             talker_prefill: Mutex::new(talker_prefill),
             talker_decode: Mutex::new(talker_decode),
             code_predictor: Mutex::new(code_predictor),
             vocoder: Mutex::new(vocoder),
+            speaker_encoder: Mutex::new(speaker_encoder),
+            tokenizer_encoder: Mutex::new(tokenizer_encoder),
             text_embedding,
             text_proj_fc1_weight,
             text_proj_fc1_bias,
@@ -146,31 +177,43 @@ impl Model {
             talker_codec_embedding,
             cp_codec_embeddings,
             tts_pad_embed,
+            mel: MelSpectrogram::new(),
         })
     }
 
-    /// Run the full synthesis pipeline: prefill → decode → code predict → vocoder.
+    /// Run the full voice-clone pipeline.
     ///
-    /// `instruction_tokens` — optional user-turn prefix for VoiceDesign control.
-    /// When `Some`, these tokens are embedded (text_proj only) at the start of
-    /// the prefill before the role prefix.
+    /// `pcm_24k`     — reference audio resampled to 24 kHz mono
+    /// `ref_tokens`  — tokenized reference transcript
+    /// `text_tokens` — tokenized target text
+    /// `language`    — language code (e.g. "en")
     pub fn synthesize(
         &self,
+        pcm_24k: &[f32],
+        ref_tokens: &[u32],
         text_tokens: &[u32],
         language: &str,
-        instruction_tokens: Option<&[u32]>,
     ) -> Result<AudioFrame<'static>, TtsError> {
         let lang_id = tokenizer::language_id(language)
             .ok_or_else(|| TtsError::UnsupportedLanguage(language.to_string()))?;
 
-        let prefill_embeds = self.build_prefill_embeds(text_tokens, lang_id, instruction_tokens)?;
+        // 1. Speaker embedding from mel spectrogram
+        let speaker_embed = self.encode_speaker(pcm_24k)?;
+
+        // 2. Reference codes from tokenizer encoder
+        let ref_codes = self.encode_ref_codes(pcm_24k)?;
+        let ref_frames = ref_codes.nrows();
+
+        // 3. Build ICL prefill embeddings
+        let prefill_embeds =
+            self.build_icl_prefill(ref_tokens, text_tokens, lang_id, &speaker_embed, &ref_codes)?;
         let prefill_len = prefill_embeds.shape()[1];
 
-        // Run talker prefill — returns last-position logits
+        // 4. Run talker prefill
         let (logits, hidden_states, mut past_keys, mut past_values) =
             self.run_talker_prefill(&prefill_embeds, prefill_len)?;
 
-        // Decode loop
+        // 5. Autoregressive decode loop
         let mut all_codes: Vec<[i64; 16]> = Vec::new();
         let mut talker_past_tokens: Vec<i64> = Vec::new();
         let mut current_logits = logits;
@@ -182,7 +225,6 @@ impl Model {
             .map_err(|e| TtsError::Synthesis(format!("reshape hidden: {e}")))?;
 
         for step in 0..MAX_NEW_TOKENS {
-            // Suppress CODEC_EOS for the first 2 steps (min_new_tokens=2)
             let group0 = sampler::sample(
                 &current_logits,
                 &TALKER_SAMPLER,
@@ -195,13 +237,13 @@ impl Model {
             }
             talker_past_tokens.push(group0);
 
-            // Run code predictor for groups 1-15
+            // Code predictor for groups 1-15
             let mut codes = [0i64; 16];
             codes[0] = group0;
             self.run_code_predictor(&current_hidden, &mut codes)?;
             all_codes.push(codes);
 
-            // Build next talker input: sum of all 16 group embeddings + tts_pad (non-streaming)
+            // Next talker input: sum all 16 group embeddings + tts_pad
             let mut next_embed = self.talker_codec_embedding.row(group0 as usize).to_owned();
             for g in 0..NUM_CP_GROUPS {
                 let cp_embed = self.cp_codec_embeddings[g].row(codes[g + 1] as usize);
@@ -213,7 +255,6 @@ impl Model {
                 .into_shape_with_order((1, 1, HIDDEN_DIM))
                 .map_err(|e| TtsError::Synthesis(format!("reshape next_embed: {e}")))?;
 
-            // Run talker decode
             let total_seq = prefill_len + step + 1;
             let position = (prefill_len + step) as i64;
 
@@ -230,8 +271,73 @@ impl Model {
             return Err(TtsError::Synthesis("model produced no audio tokens".into()));
         }
 
-        self.run_vocoder(&all_codes)
+        // 6. Vocoder: prepend ref codes, decode, trim reference portion
+        self.run_vocoder_clone(&all_codes, &ref_codes, ref_frames)
     }
+
+    // ------------------------------------------------------------------
+    // Reference-audio preprocessing
+    // ------------------------------------------------------------------
+
+    /// Compute mel spectrogram → run speaker_encoder.onnx → (1024,) speaker embed.
+    fn encode_speaker(&self, pcm_24k: &[f32]) -> Result<Array1<f32>, TtsError> {
+        let mel = self.mel.compute(pcm_24k); // (T_mel, 128)
+        let n_frames = mel.nrows();
+        let mel_3d = mel
+            .into_shape_with_order((1, n_frames, 128))
+            .map_err(|e| TtsError::Synthesis(format!("reshape mel: {e}")))?;
+
+        let t_mel = TensorRef::from_array_view(&mel_3d)
+            .map_err(|e| TtsError::Synthesis(format!("tensor mel: {e}")))?;
+
+        let mut session = self.speaker_encoder.lock().unwrap();
+        let outputs = session
+            .run(ort::inputs!["mels" => t_mel])
+            .map_err(|e| TtsError::Synthesis(format!("speaker encoder failed: {e}")))?;
+
+        let (_, data) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| TtsError::Synthesis(format!("extract speaker embed: {e}")))?;
+
+        Ok(Array1::from(data.to_vec()))
+    }
+
+    /// Zero-pad audio to canonical 10 s → run tokenizer_encoder.onnx → (T_ref, 16) codes.
+    fn encode_ref_codes(&self, pcm_24k: &[f32]) -> Result<Array2<i64>, TtsError> {
+        let n = pcm_24k.len().min(TOKENIZER_CANONICAL_SAMPLES);
+        let mut padded = vec![0.0f32; TOKENIZER_CANONICAL_SAMPLES];
+        padded[..n].copy_from_slice(&pcm_24k[..n]);
+
+        let waveform = Array2::from_shape_vec((1, TOKENIZER_CANONICAL_SAMPLES), padded)
+            .map_err(|e| TtsError::Synthesis(format!("reshape waveform: {e}")))?;
+
+        let t_wav = TensorRef::from_array_view(&waveform)
+            .map_err(|e| TtsError::Synthesis(format!("tensor waveform: {e}")))?;
+
+        let mut session = self.tokenizer_encoder.lock().unwrap();
+        let outputs = session
+            .run(ort::inputs!["waveform" => t_wav])
+            .map_err(|e| TtsError::Synthesis(format!("tokenizer encoder failed: {e}")))?;
+
+        // Output shape: (1, 16, 125)
+        let (_, codes_data) = outputs[0]
+            .try_extract_tensor::<i64>()
+            .map_err(|e| TtsError::Synthesis(format!("extract ref codes: {e}")))?;
+
+        let actual_frames = (n as f64 / TOKENIZER_DOWNSAMPLE as f64).ceil() as usize;
+
+        // Reshape (1, 16, 125) → take only actual_frames, transpose to (T_ref, 16)
+        let full = Array3::from_shape_vec((1, 16, 125), codes_data.to_vec())
+            .map_err(|e| TtsError::Synthesis(format!("reshape codes: {e}")))?;
+
+        let trimmed = full.slice(s![0, .., ..actual_frames]).t().to_owned(); // (actual_frames, 16)
+
+        Ok(trimmed)
+    }
+
+    // ------------------------------------------------------------------
+    // ICL prefill construction
+    // ------------------------------------------------------------------
 
     /// Project a text token through the embedding table + SiLU MLP.
     fn text_project_token(&self, token: u32) -> Array1<f32> {
@@ -245,22 +351,28 @@ impl Model {
         )
     }
 
-    /// Build prefill embeddings (non-streaming: all text embedded in prefill).
+    /// Build ICL prefill embeddings for the voice-clone pipeline.
     ///
+    /// Layout:
     /// ```text
-    /// [instr_tok × M]                            — user turn (text_proj only, optional)
-    /// [im_start, assistant, \n]                  — role prefix (text proj only)
-    /// [think, think_bos, lang_id, think_eos]     — codec prefix (tts_pad + codec_embed)
-    /// [tts_bos + codec_pad]                      — transition
-    /// [text_proj(tok) + codec_pad] × N           — all text tokens
-    /// [text_proj(TTS_EOS) + codec_pad]            — TTS_EOS
-    /// [tts_pad + codec_bos]                       — final
+    /// [im_start, assistant, \n]                        — role prefix (text_proj only)
+    /// [tts_pad + codec(think)]
+    /// [tts_pad + codec(think_bos)]                     — codec think prefix
+    /// [tts_pad + codec(lang_id)]
+    /// [tts_pad + codec(think_eos)]
+    /// [tts_pad + speaker_embed]                        — speaker slot
+    /// [tts_bos + codec_pad]                            — transition
+    /// ICL block:
+    ///   text side:  [text_proj(ref_tokens ++ text_tokens), tts_eos] + codec_pad  (T1)
+    ///   codec side: [codec_bos, Σ_g codec_embed_g[ref_code]] + tts_pad           (T2)
     /// ```
-    fn build_prefill_embeds(
+    fn build_icl_prefill(
         &self,
+        ref_tokens: &[u32],
         text_tokens: &[u32],
         lang_id: i64,
-        instruction_tokens: Option<&[u32]>,
+        speaker_embed: &Array1<f32>,
+        ref_codes: &Array2<i64>, // (T_ref, 16)
     ) -> Result<Array3<f32>, TtsError> {
         let codec_pad_embed = self
             .talker_codec_embedding
@@ -273,32 +385,29 @@ impl Model {
         let tts_bos_embed = self.text_project_token(TTS_BOS);
         let tts_eos_embed = self.text_project_token(TTS_EOS);
 
-        // VoiceDesign codec prefix — no speaker slot
         let codec_prefix = [CODEC_THINK, CODEC_THINK_BOS, lang_id, CODEC_THINK_EOS];
+        let ref_frames = ref_codes.nrows();
 
-        let instr_len = instruction_tokens.map_or(0, |t| t.len());
-        // M instruction + 3 role + 4 codec_prefix + 1 transition + N text + 1 TTS_EOS + 1 final
-        let seq_len = instr_len + 3 + codec_prefix.len() + 1 + text_tokens.len() + 1 + 1;
+        // ICL text side: text_proj(ref_tokens ++ text_tokens) | tts_eos
+        let combined_text_len = ref_tokens.len() + text_tokens.len();
+        let t1 = combined_text_len + 1; // +1 for tts_eos
+
+        // ICL codec side: codec_bos | Σ_g codec_embed per ref frame
+        let t2 = 1 + ref_frames;
+
+        // Total: 3 role + 4 codec_prefix + 1 speaker + 1 transition + T1 + T2
+        let seq_len = 3 + codec_prefix.len() + 1 + 1 + t1 + t2;
         let mut embeds = Array3::<f32>::zeros((1, seq_len, HIDDEN_DIM));
         let mut pos = 0;
 
-        // 0. Instruction / user-turn tokens: text_proj only (VoiceDesign control)
-        if let Some(instr_toks) = instruction_tokens {
-            for &tok in instr_toks {
-                let embed = self.text_project_token(tok);
-                embeds.slice_mut(s![0, pos, ..]).assign(&embed);
-                pos += 1;
-            }
-        }
-
-        // 1. Role prefix: text_proj only
+        // Part A: Role prefix (3 tokens, text_proj only)
         for &tok in &[IM_START, ASSISTANT, NEWLINE] {
             let embed = self.text_project_token(tok);
             embeds.slice_mut(s![0, pos, ..]).assign(&embed);
             pos += 1;
         }
 
-        // 2. Codec prefix: tts_pad + codec_embed(token)
+        // Part B: Codec think prefix — tts_pad + codec_embed(token)
         for &codec_tok in &codec_prefix {
             let mut embed = self.tts_pad_embed.clone();
             embed += &self.talker_codec_embedding.row(codec_tok as usize);
@@ -306,39 +415,62 @@ impl Model {
             pos += 1;
         }
 
-        // 3. Transition: tts_bos + codec_pad
+        // Part C: Speaker slot — tts_pad + speaker_embed
+        {
+            let embed = &self.tts_pad_embed + speaker_embed;
+            embeds.slice_mut(s![0, pos, ..]).assign(&embed);
+            pos += 1;
+        }
+
+        // Part D: Transition — tts_bos + codec_pad
         {
             let embed = &tts_bos_embed + &codec_pad_embed;
             embeds.slice_mut(s![0, pos, ..]).assign(&embed);
             pos += 1;
         }
 
-        // 4. All text tokens: text_proj(tok) + codec_pad
-        for &tok in text_tokens {
+        // Part E: ICL block
+        // Text side: text_proj(ref_tokens ++ text_tokens) | tts_eos, all + codec_pad
+        for &tok in ref_tokens.iter().chain(text_tokens.iter()) {
             let embed = self.text_project_token(tok) + &codec_pad_embed;
             embeds.slice_mut(s![0, pos, ..]).assign(&embed);
             pos += 1;
         }
-
-        // 5. TTS_EOS: text_proj(TTS_EOS) + codec_pad
         {
-            let embed = tts_eos_embed + &codec_pad_embed;
+            let embed = &tts_eos_embed + &codec_pad_embed;
             embeds.slice_mut(s![0, pos, ..]).assign(&embed);
             pos += 1;
         }
 
-        // 6. Final: tts_pad + codec_bos
+        // Codec side: codec_bos + tts_pad, then Σ codec_embed_g[ref_code] + tts_pad per frame
         {
-            let embed = &self.tts_pad_embed + &codec_bos_embed;
+            let embed = &codec_bos_embed + &self.tts_pad_embed;
             embeds.slice_mut(s![0, pos, ..]).assign(&embed);
+            pos += 1;
+        }
+        for f in 0..ref_frames {
+            // Group 0: talker codec embedding
+            let mut embed = self
+                .talker_codec_embedding
+                .row(ref_codes[[f, 0]] as usize)
+                .to_owned();
+            // Groups 1-15: CP codec embeddings
+            for g in 0..NUM_CP_GROUPS {
+                embed += &self.cp_codec_embeddings[g].row(ref_codes[[f, g + 1]] as usize);
+            }
+            embed += &self.tts_pad_embed;
+            embeds.slice_mut(s![0, pos, ..]).assign(&embed);
+            pos += 1;
         }
 
+        debug_assert_eq!(pos, seq_len);
         Ok(embeds)
     }
 
-    /// Run talker_prefill.onnx.
-    ///
-    /// Returns (last-position logits, hidden_states, past_keys, past_values).
+    // ------------------------------------------------------------------
+    // Talker prefill / decode (same structure as model.rs, 1024-dim)
+    // ------------------------------------------------------------------
+
     fn run_talker_prefill(
         &self,
         inputs_embeds: &Array3<f32>,
@@ -346,7 +478,6 @@ impl Model {
     ) -> Result<TalkerOutput, TtsError> {
         let attention_mask = Array2::<i64>::ones((1, seq_len));
 
-        // M-RoPE position IDs: (3, 1, T) — all axes identical for TTS
         let positions: Vec<i64> = (0..seq_len as i64).collect();
         let pos_2d = Array1::from(positions)
             .into_shape_with_order((1, seq_len))
@@ -370,20 +501,17 @@ impl Model {
             ])
             .map_err(|e| TtsError::Synthesis(format!("talker prefill failed: {e}")))?;
 
-        // Logits: (1, T, 3072) — extract only the last position
         let (_, logits_data) = outputs[0]
             .try_extract_tensor::<f32>()
             .map_err(|e| TtsError::Synthesis(format!("extract logits: {e}")))?;
         let logits: Vec<f32> = logits_data[logits_data.len() - TALKER_VOCAB_SIZE..].to_vec();
 
-        // Hidden states: (1, T, 2048)
         let (_, hidden_data) = outputs[1]
             .try_extract_tensor::<f32>()
             .map_err(|e| TtsError::Synthesis(format!("extract hidden: {e}")))?;
         let hidden = Array3::from_shape_vec((1, seq_len, HIDDEN_DIM), hidden_data.to_vec())
             .map_err(|e| TtsError::Synthesis(format!("reshape hidden: {e}")))?;
 
-        // Stack per-layer KV caches: present_key_0, present_value_0, ...
         let mut key_layers = Vec::with_capacity(NUM_LAYERS);
         let mut value_layers = Vec::with_capacity(NUM_LAYERS);
         for layer in 0..NUM_LAYERS {
@@ -433,14 +561,13 @@ impl Model {
         Ok((logits, hidden, past_keys, past_values))
     }
 
-    /// Run talker_decode.onnx for a single step.
     fn run_talker_decode(
         &self,
-        inputs_embeds: &Array3<f32>, // (1, 1, 2048)
+        inputs_embeds: &Array3<f32>,
         total_seq: usize,
         position: i64,
-        past_keys: &Array5<f32>,   // (28, 1, 8, past_seq, 128)
-        past_values: &Array5<f32>, // (28, 1, 8, past_seq, 128)
+        past_keys: &Array5<f32>,
+        past_values: &Array5<f32>,
     ) -> Result<TalkerOutput, TtsError> {
         let attention_mask = Array2::<i64>::ones((1, total_seq));
         let position_ids = Array3::<i64>::from_elem((3, 1, 1), position);
@@ -499,13 +626,13 @@ impl Model {
         Ok((logits, hidden, new_keys, new_values))
     }
 
-    /// Run the code predictor to fill codebook groups 1-15.
-    ///
-    /// The code_predictor.onnx includes the small_to_mtp projection internally,
-    /// so host code passes 2048-dim embeddings directly.
+    // ------------------------------------------------------------------
+    // Code predictor (groups 1-15)
+    // ------------------------------------------------------------------
+
     fn run_code_predictor(
         &self,
-        hidden_state: &Array3<f32>, // (1, 1, 2048)
+        hidden_state: &Array3<f32>,
         codes: &mut [i64; 16],
     ) -> Result<(), TtsError> {
         let group0_embed = self
@@ -515,11 +642,9 @@ impl Model {
             .into_shape_with_order((1, 1, HIDDEN_DIM))
             .map_err(|e| TtsError::Synthesis(format!("reshape group0 embed: {e}")))?;
 
-        // First call: concat(hidden_state, group0_embed) → (1, 2, 2048)
         let first_input = concatenate(Axis(1), &[hidden_state.view(), group0_embed.view()])
             .map_err(|e| TtsError::Synthesis(format!("concat cp input: {e}")))?;
 
-        // Empty KV cache: (5, 1, 8, 0, 128)
         let mut cp_past_keys =
             Array5::<f32>::zeros((CP_NUM_LAYERS, 1, CP_NUM_KV_HEADS, 0, HEAD_DIM));
         let mut cp_past_values =
@@ -551,7 +676,6 @@ impl Model {
                     TtsError::Synthesis(format!("code predictor group {group_idx} failed: {e}"))
                 })?;
 
-            // Sample from last position logits
             let (_, logits_data) = outputs[0]
                 .try_extract_tensor::<f32>()
                 .map_err(|e| TtsError::Synthesis(format!("extract cp logits: {e}")))?;
@@ -561,7 +685,6 @@ impl Model {
             let token = sampler::sample(last_logits, &CP_SAMPLER, &[], sampler::no_mask) as i64;
             codes[group_idx + 1] = token;
 
-            // Update KV cache
             let seq_so_far = if group_idx == 0 { 2 } else { group_idx + 2 };
 
             let (_, keys_data) = outputs[1]
@@ -582,7 +705,6 @@ impl Model {
             )
             .map_err(|e| TtsError::Synthesis(format!("reshape cp values: {e}")))?;
 
-            // Prepare next input (if not the last group)
             if group_idx < NUM_CP_GROUPS - 1 {
                 let next_embed = self.cp_codec_embeddings[group_idx]
                     .row(token as usize)
@@ -596,15 +718,32 @@ impl Model {
         Ok(())
     }
 
-    /// Run vocoder on the collected code matrix → AudioFrame.
-    fn run_vocoder(&self, all_codes: &[[i64; 16]]) -> Result<AudioFrame<'static>, TtsError> {
-        let num_steps = all_codes.len();
+    // ------------------------------------------------------------------
+    // Vocoder with reference-code prepend + proportional trim
+    // ------------------------------------------------------------------
 
-        // Build (1, 16, T) i64 tensor
-        let mut codes = Array3::<i64>::zeros((1, 16, num_steps));
-        for (t, frame_codes) in all_codes.iter().enumerate() {
+    fn run_vocoder_clone(
+        &self,
+        gen_codes: &[[i64; 16]],
+        ref_codes: &Array2<i64>, // (T_ref, 16)
+        ref_frames: usize,
+    ) -> Result<AudioFrame<'static>, TtsError> {
+        let gen_frames = gen_codes.len();
+        let total_frames = ref_frames + gen_frames;
+
+        // Build (1, 16, total_frames) code tensor: ref_codes | gen_codes
+        let mut codes = Array3::<i64>::zeros((1, 16, total_frames));
+
+        // Fill ref codes (stored as T_ref × 16)
+        for f in 0..ref_frames {
+            for g in 0..16 {
+                codes[[0, g, f]] = ref_codes[[f, g]];
+            }
+        }
+        // Fill generated codes
+        for (t, frame_codes) in gen_codes.iter().enumerate() {
             for (g, &code) in frame_codes.iter().enumerate() {
-                codes[[0, g, t]] = code;
+                codes[[0, g, ref_frames + t]] = code;
             }
         }
 
@@ -620,143 +759,10 @@ impl Model {
             .try_extract_tensor::<f32>()
             .map_err(|e| TtsError::Synthesis(format!("extract waveform: {e}")))?;
 
-        // Trim leading silence produced by the think phase.
-        let start = waveform.iter().position(|&s| s.abs() > 0.01).unwrap_or(0);
-        let trimmed = waveform[start..].to_vec();
+        // Trim leading reference portion proportionally
+        let cut = ref_frames as f64 / total_frames.max(1) as f64 * waveform.len() as f64;
+        let trimmed = waveform[cut as usize..].to_vec();
 
         Ok(AudioFrame::from_vec(trimmed, SAMPLE_RATE))
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Ensure ORT can load ONNX models with external data from `onnx_dir`.
-///
-/// HuggingFace Hub snapshot directories store files as symlinks into a
-/// `blobs/` directory.  ORT's external-data path validation resolves symlinks
-/// and rejects any `.onnx.data` file whose real path escapes the model
-/// directory, even though the symlink itself sits right next to the `.onnx`.
-///
-/// When symlinks are detected, this function creates a sibling directory
-/// (`{onnx_dir}.ort`) where each symlink is replaced by a hard link to the
-/// symlink's *target* (resolved via `canonicalize`).  Hard-linking the target
-/// (not the symlink inode) is critical: on some filesystems hard-linking a
-/// symlink succeeds but produces another symlink, which would fail ORT's
-/// validation again.  Hard links are free (no data is copied).  Falls back to
-/// a full copy only on cross-device mounts.
-///
-/// Returns `onnx_dir` unchanged if no symlinks are present.
-pub(super) fn prepare_onnx_dir(onnx_dir: &Path) -> Result<std::path::PathBuf, TtsError> {
-    let entries: Vec<_> = std::fs::read_dir(onnx_dir)
-        .map_err(|e| TtsError::Model(format!("cannot read {}: {e}", onnx_dir.display())))?
-        .filter_map(|e| e.ok())
-        .collect();
-
-    let has_symlinks = entries.iter().any(|e| e.path().is_symlink());
-    if !has_symlinks {
-        return Ok(onnx_dir.to_path_buf());
-    }
-
-    let resolved = onnx_dir.with_extension("ort");
-    std::fs::create_dir_all(&resolved)
-        .map_err(|e| TtsError::Model(format!("cannot create {}: {e}", resolved.display())))?;
-
-    for entry in &entries {
-        let src = entry.path();
-        // Skip directories — we only need to resolve file symlinks.
-        if src.is_dir() {
-            continue;
-        }
-        let dst = resolved.join(entry.file_name());
-        if dst.exists() {
-            continue;
-        }
-        // Hard-link the symlink's *target*, not the symlink inode itself.
-        // On some filesystems hard-linking a symlink succeeds but produces
-        // another symlink, which would fail ORT's path validation again.
-        let link_src = if src.is_symlink() {
-            src.canonicalize()
-                .map_err(|e| TtsError::Model(format!("cannot resolve {}: {e}", src.display())))?
-        } else {
-            src.clone()
-        };
-        if std::fs::hard_link(&link_src, &dst).is_err() {
-            std::fs::copy(&src, &dst)
-                .map_err(|e| TtsError::Model(format!("cannot copy {}: {e}", src.display())))?;
-        }
-    }
-
-    Ok(resolved)
-}
-
-/// Register the requested execution provider on a session builder.
-///
-/// CPU is the ORT default — no registration needed. CUDA and CoreML require
-/// an ORT build that includes those providers; otherwise ORT will return an error.
-pub(super) fn apply_execution_provider(
-    builder: ort::session::builder::SessionBuilder,
-    ep: super::ExecutionProvider,
-) -> Result<ort::session::builder::SessionBuilder, TtsError> {
-    use ort::execution_providers::{
-        CUDAExecutionProvider, CoreMLExecutionProvider, TensorRTExecutionProvider,
-    };
-    match ep {
-        super::ExecutionProvider::Cpu => Ok(builder),
-        super::ExecutionProvider::Cuda => builder
-            .with_execution_providers([CUDAExecutionProvider::default().build().error_on_failure()])
-            .map_err(|e| TtsError::Model(format!("CUDA execution provider error: {e}"))),
-        super::ExecutionProvider::TensorRt => builder
-            .with_execution_providers([TensorRTExecutionProvider::default()
-                .build()
-                .error_on_failure()])
-            .map_err(|e| TtsError::Model(format!("TensorRT execution provider error: {e}"))),
-        super::ExecutionProvider::CoreMl => builder
-            .with_execution_providers([CoreMLExecutionProvider::default()
-                .build()
-                .error_on_failure()])
-            .map_err(|e| TtsError::Model(format!("CoreML execution provider error: {e}"))),
-    }
-}
-
-/// SiLU-gated MLP text projection.
-pub(super) fn text_project(
-    input: &Array1<f32>,
-    fc1_weight: &Array2<f32>,
-    fc1_bias: &Array1<f32>,
-    fc2_weight: &Array2<f32>,
-    fc2_bias: &Array1<f32>,
-) -> Array1<f32> {
-    let hidden = fc1_weight.dot(input) + fc1_bias;
-    let activated = hidden.mapv(|x| x * (1.0 / (1.0 + (-x).exp())));
-    fc2_weight.dot(&activated) + fc2_bias
-}
-
-/// Load a 2D .npy file into Array2<f32>.
-pub(super) fn load_npy2(dir: &Path, name: &str) -> Result<Array2<f32>, TtsError> {
-    let path = dir.join(name);
-    let bytes = std::fs::read(&path)
-        .map_err(|e| TtsError::Model(format!("failed to read {}: {e}", path.display())))?;
-    let reader = npyz::NpyFile::new(&bytes[..])
-        .map_err(|e| TtsError::Model(format!("failed to parse {name}: {e}")))?;
-    let shape = reader.shape().to_vec();
-    let data: Vec<f32> = reader
-        .into_vec()
-        .map_err(|e| TtsError::Model(format!("failed to read data from {name}: {e}")))?;
-    Array2::from_shape_vec((shape[0] as usize, shape[1] as usize), data)
-        .map_err(|e| TtsError::Model(format!("shape mismatch in {name}: {e}")))
-}
-
-/// Load a 1D .npy file into Array1<f32>.
-pub(super) fn load_npy1(dir: &Path, name: &str) -> Result<Array1<f32>, TtsError> {
-    let path = dir.join(name);
-    let bytes = std::fs::read(&path)
-        .map_err(|e| TtsError::Model(format!("failed to read {}: {e}", path.display())))?;
-    let reader = npyz::NpyFile::new(&bytes[..])
-        .map_err(|e| TtsError::Model(format!("failed to parse {name}: {e}")))?;
-    let data: Vec<f32> = reader
-        .into_vec()
-        .map_err(|e| TtsError::Model(format!("failed to read data from {name}: {e}")))?;
-    Ok(Array1::from(data))
 }

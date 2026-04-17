@@ -3,13 +3,20 @@ name: Export ONNX & Publish to HuggingFace
 on:
   workflow_dispatch:
     inputs:
+      variant:
+        description: "Model variant to export"
+        default: "voicedesign"
+        type: choice
+        options:
+          - voicedesign
+          - clone
       model_id:
-        description: "HuggingFace source model"
-        default: "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        description: "HuggingFace source model (leave default for selected variant)"
+        default: ""
         type: string
       hf_repo:
-        description: "Target HuggingFace repo (org/name)"
-        default: "wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX"
+        description: "Target HuggingFace repo (leave default for selected variant)"
+        default: ""
         type: string
       runner:
         description: "GitHub Actions runner label"
@@ -20,7 +27,7 @@ on:
         default: false
         type: boolean
       revision:
-        description: "HuggingFace revision/branch to push to (e.g. v1, 2026-04-06). Defaults to main."
+        description: "HuggingFace revision/branch to push to. Defaults to main."
         default: ""
         type: string
 
@@ -28,6 +35,11 @@ jobs:
   export-and-publish:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 120
+
+    env:
+      MODEL_ID: ${{ inputs.model_id != '' && inputs.model_id || (inputs.variant == 'clone' && 'Qwen/Qwen3-TTS-12Hz-0.6B-Base' || 'Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign') }}
+      HF_REPO: ${{ inputs.hf_repo != '' && inputs.hf_repo || (inputs.variant == 'clone' && 'wavekat/Qwen3-TTS-0.6B-Base-ONNX' || 'wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX') }}
+      OUTPUT_DIR: ${{ inputs.variant == 'clone' && './output/qwen3-tts-0.6b-base' || './output/qwen3-tts-1.7b-voicedesign' }}
 
     steps:
       - name: Free disk space
@@ -61,12 +73,23 @@ jobs:
         working-directory: tools/qwen3-tts-onnx
         run: make venv
 
-      - name: Export FP32 ONNX models
+      - name: Export FP32 ONNX models (VoiceDesign)
+        if: inputs.variant == 'voicedesign'
         working-directory: tools/qwen3-tts-onnx
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          make export MODEL_ID="${{ inputs.model_id }}"
+          make export MODEL_ID="${{ env.MODEL_ID }}"
+          echo "=== Disk after export ==="
+          df -h /
+
+      - name: Export FP32 ONNX models (Clone — 6 components)
+        if: inputs.variant == 'clone'
+        working-directory: tools/qwen3-tts-onnx
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          make clone-export CLONE_MODEL_ID="${{ env.MODEL_ID }}"
           echo "=== Disk after export ==="
           df -h /
 
@@ -75,7 +98,7 @@ jobs:
         working-directory: tools/qwen3-tts-onnx
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: make validate MODEL_ID="${{ inputs.model_id }}"
+        run: make validate MODEL_ID="${{ env.MODEL_ID }}" OUTPUT_DIR="${{ env.OUTPUT_DIR }}"
 
       - name: Free PyTorch model cache
         run: |
@@ -83,16 +106,31 @@ jobs:
           echo "=== Disk after cache cleanup ==="
           df -h /
 
-      - name: Quantize to INT4
+      - name: Quantize to INT4 (VoiceDesign)
+        if: inputs.variant == 'voicedesign'
         working-directory: tools/qwen3-tts-onnx
         run: |
           make quantize
           echo "=== Disk after quantize ==="
           df -h /
 
-      - name: Package for HuggingFace
+      - name: Quantize to INT4 (Clone — encoders stay FP32)
+        if: inputs.variant == 'clone'
+        working-directory: tools/qwen3-tts-onnx
+        run: |
+          make clone-base-preset CLONE_MODEL_ID="${{ env.MODEL_ID }}"
+          echo "=== Disk after quantize ==="
+          df -h /
+
+      - name: Package for HuggingFace (VoiceDesign)
+        if: inputs.variant == 'voicedesign'
         working-directory: tools/qwen3-tts-onnx
         run: make hf
+
+      - name: Package for HuggingFace (Clone)
+        if: inputs.variant == 'clone'
+        working-directory: tools/qwen3-tts-onnx
+        run: make clone-hf
 
       - name: Upload to HuggingFace
         working-directory: tools/qwen3-tts-onnx
@@ -102,10 +140,10 @@ jobs:
           .venv/bin/pip install -q huggingface_hub
           REVISION="${{ inputs.revision }}"
           .venv/bin/huggingface-cli upload \
-            "${{ inputs.hf_repo }}" \
-            ./output/qwen3-tts-1.7b-voicedesign/ \
+            "${{ env.HF_REPO }}" \
+            ${{ env.OUTPUT_DIR }}/ \
             --repo-type model \
-            --commit-message "export: ${{ inputs.model_id }} (run #${{ github.run_number }})" \
+            --commit-message "export: ${{ env.MODEL_ID }} (run #${{ github.run_number }})" \
             ${REVISION:+--revision "$REVISION"}
 
       - name: Job summary
@@ -113,14 +151,15 @@ jobs:
         run: |
           REVISION="${{ inputs.revision }}"
           REVISION_DISPLAY="${REVISION:-main}"
-          HF_URL="https://huggingface.co/${{ inputs.hf_repo }}/tree/${REVISION_DISPLAY}"
+          HF_URL="https://huggingface.co/${{ env.HF_REPO }}/tree/${REVISION_DISPLAY}"
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
           ## ONNX Export Summary
 
           | | |
           |---|---|
-          | **Source model** | \`${{ inputs.model_id }}\` |
-          | **HuggingFace repo** | [${{ inputs.hf_repo }}](${HF_URL}) |
+          | **Variant** | \`${{ inputs.variant }}\` |
+          | **Source model** | \`${{ env.MODEL_ID }}\` |
+          | **HuggingFace repo** | [${{ env.HF_REPO }}](${HF_URL}) |
           | **Revision** | \`${REVISION_DISPLAY}\` |
           | **Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
           | **Validation** | ${{ inputs.skip_validation && 'skipped' || 'passed' }} |

@@ -5,7 +5,7 @@ PYTHON ?= .venv/bin/python
 FP32_DIR = $(OUTPUT_DIR)/fp32
 INT4_DIR = $(OUTPUT_DIR)/int4
 
-.PHONY: all venv export embeddings talker code-predictor vocoder validate validate-int4 quantize hf generate generate-int4 generate-zh generate-zh-int4 clean help
+.PHONY: all venv export embeddings talker code-predictor vocoder speaker-encoder tokenizer-encoder validate validate-int4 quantize hf generate generate-int4 generate-zh generate-zh-int4 clean help clone-all clone-export clone-base-preset
 
 help: ## Show this help
 	@echo "Qwen3-TTS ONNX Export & Quantization Toolkit"
@@ -18,6 +18,8 @@ help: ## Show this help
 	@echo "Variables:"
 	@echo "  MODEL_ID             HuggingFace model ID (default: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)"
 	@echo "  OUTPUT_DIR           Output directory (default: ./output/qwen3-tts-1.7b-voicedesign)"
+	@echo "  CLONE_MODEL_ID       Voice clone model ID (default: Qwen/Qwen3-TTS-12Hz-0.6B-Base)"
+	@echo "  CLONE_OUTPUT_DIR     Voice clone output dir (default: ./output/qwen3-tts-0.6b-base)"
 	@echo "  PYTHON               Python interpreter (default: .venv/bin/python)"
 
 venv: ## Create virtualenv and install dependencies
@@ -39,6 +41,12 @@ code-predictor: ## Export code predictor ONNX model
 
 vocoder: ## Export vocoder ONNX model
 	$(PYTHON) export_vocoder.py --model-id $(MODEL_ID) --output-dir $(OUTPUT_DIR)
+
+speaker-encoder: ## Export ECAPA-TDNN speaker encoder ONNX (Base models only)
+	$(PYTHON) export_speaker_encoder.py --model-id $(MODEL_ID) --output-dir $(OUTPUT_DIR)
+
+tokenizer-encoder: ## Export speech-tokenizer encoder ONNX (Base models only)
+	$(PYTHON) export_tokenizer_encoder.py --model-id $(MODEL_ID) --output-dir $(OUTPUT_DIR)
 
 validate: ## Validate ONNX exports against PyTorch
 	$(PYTHON) validate.py --model-id $(MODEL_ID) --onnx-dir $(OUTPUT_DIR)
@@ -85,3 +93,59 @@ generate-zh-int4: ## Generate Chinese sample audio (INT4)
 
 clean: ## Remove output directory
 	rm -rf $(OUTPUT_DIR)
+
+# ---------------------------------------------------------------------------
+# 0.6B Base voice clone preset
+#
+# Same export scripts as VoiceDesign, plus the two extra encoders. Pin to a
+# separate output directory so 1.7B and 0.6B builds don't stomp each other.
+# ---------------------------------------------------------------------------
+
+CLONE_MODEL_ID  ?= Qwen/Qwen3-TTS-12Hz-0.6B-Base
+CLONE_OUTPUT_DIR ?= ./output/qwen3-tts-0.6b-base
+
+clone-all: clone-export clone-base-preset clone-hf ## Full 0.6B Base export + INT4 + HF packaging
+
+clone-export: ## Export all ONNX models for the 0.6B Base voice clone variant
+	@echo "\n[1/6] Embeddings, config, tokenizer ..."
+	$(MAKE) embeddings        MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[2/6] Talker prefill + decode ..."
+	$(MAKE) talker            MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[3/6] Code predictor ..."
+	$(MAKE) code-predictor    MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[4/6] Vocoder ..."
+	$(MAKE) vocoder           MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[5/6] Speaker encoder (ECAPA-TDNN) ..."
+	$(MAKE) speaker-encoder   MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\n[6/6] Tokenizer encoder (Mimi) ..."
+	$(MAKE) tokenizer-encoder MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+	@echo "\nAll 0.6B Base clone exports complete."
+
+clone-hf: ## Package 0.6B Base clone output for Hugging Face upload
+	@echo "Packaging 0.6B Base clone for Hugging Face..."
+	cp README_CLONE.md $(CLONE_OUTPUT_DIR)/README.md
+	sed 's|./output/qwen3-tts-0.6b-base|.|' generate_clone_onnx.py > $(CLONE_OUTPUT_DIR)/generate_clone_onnx.py
+	printf 'onnxruntime>=1.24.0\nnumpy>=2.0\nsoundfile>=0.13\ntransformers>=4.57.0\nlibrosa>=0.10\n' > $(CLONE_OUTPUT_DIR)/requirements.txt
+	printf '*.onnx filter=lfs diff=lfs merge=lfs -text\n*.onnx.data filter=lfs diff=lfs merge=lfs -text\n*.npy filter=lfs diff=lfs merge=lfs -text\n' > $(CLONE_OUTPUT_DIR)/.gitattributes
+	@echo "Done: $(CLONE_OUTPUT_DIR) is ready for 'huggingface-cli upload'"
+
+clone-base-preset: ## INT4 quantize the talker/CP for the 0.6B Base build (encoders stay FP32)
+	@echo "\nQuantizing talker + CP to INT4 (speaker/tokenizer encoders stay FP32) ..."
+	$(MAKE) quantize MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
+
+CLONE_REF_AUDIO ?= fixtures/ref_clone.wav
+CLONE_REF_TEXT  ?= Give every small business the voice of a big one. With WaveKat, your phone is always answered by a voice your customers trust.
+
+clone-fixture: ## Regenerate fixtures/ref_clone.wav via wavekat-tts (1.7B VoiceDesign)
+	@mkdir -p fixtures
+	cd ../.. && cargo run --release --example synthesize --features qwen3-tts -- \
+		--precision fp32 \
+		--instruction "Speak in a warm and friendly female voice with natural intonation." \
+		--output tools/qwen3-tts-onnx/fixtures/ref_clone.wav \
+		"$(CLONE_REF_TEXT)"
+
+clone-generate: ## Generate sample voice-clone audio (FP32)
+	$(PYTHON) generate_clone_onnx.py --model-dir $(CLONE_OUTPUT_DIR) \
+		--ref-audio "$(CLONE_REF_AUDIO)" --ref-text "$(CLONE_REF_TEXT)" \
+		--text "Your customers deserve a voice they can trust, every time they call." \
+		-o clone_output.wav

@@ -259,4 +259,5 @@ fn synthesize_one(
     audio.write_wav(output).expect("failed to write WAV");
 
     eprintln!("Wrote {}", output.display());
+    eprintln!("Done.");
 }
