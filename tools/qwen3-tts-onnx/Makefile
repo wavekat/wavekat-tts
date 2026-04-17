@@ -125,8 +125,8 @@ clone-base-preset: ## INT4 quantize the talker/CP for the 0.6B Base build (encod
 	@echo "\nQuantizing talker + CP to INT4 (speaker/tokenizer encoders stay FP32) ..."
 	$(MAKE) quantize MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
 
-CLONE_REF_AUDIO ?= clone.wav
-CLONE_REF_TEXT  ?= Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it! And thanks to you.
+CLONE_REF_AUDIO ?= fixtures/ref_clone.wav
+CLONE_REF_TEXT  ?= Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it. And thanks to you.
 
 clone-generate: ## Generate sample voice-clone audio (FP32)
 	$(PYTHON) generate_clone_onnx.py --model-dir $(CLONE_OUTPUT_DIR) \
