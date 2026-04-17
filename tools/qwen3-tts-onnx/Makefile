@@ -128,6 +128,12 @@ clone-base-preset: ## INT4 quantize the talker/CP for the 0.6B Base build (encod
 CLONE_REF_AUDIO ?= fixtures/ref_clone.wav
 CLONE_REF_TEXT  ?= Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it. And thanks to you.
 
+clone-fixture: ## Regenerate fixtures/ref_clone.wav via macOS TTS (requires say + soundfile)
+	@mkdir -p fixtures
+	say -o /tmp/_ref_clone.aiff "$(CLONE_REF_TEXT)"
+	$(PYTHON) -c "import soundfile as sf; import librosa; a,_=librosa.load('/tmp/_ref_clone.aiff',sr=24000,mono=True); sf.write('fixtures/ref_clone.wav',a,24000); print(f'fixtures/ref_clone.wav: {len(a)/24000:.1f}s')"
+	@rm -f /tmp/_ref_clone.aiff
+
 clone-generate: ## Generate sample voice-clone audio (FP32)
 	$(PYTHON) generate_clone_onnx.py --model-dir $(CLONE_OUTPUT_DIR) \
 		--ref-audio "$(CLONE_REF_AUDIO)" --ref-text "$(CLONE_REF_TEXT)" \
