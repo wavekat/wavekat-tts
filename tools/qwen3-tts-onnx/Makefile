@@ -131,6 +131,7 @@ CLONE_REF_TEXT  ?= Give every small business the voice of a big one. With WaveKa
 clone-fixture: ## Regenerate fixtures/ref_clone.wav via wavekat-tts (1.7B VoiceDesign)
 	@mkdir -p fixtures
 	cd ../.. && cargo run --release --example synthesize --features qwen3-tts -- \
+		--precision fp32 \
 		--instruction "Speak in a warm and friendly female voice with natural intonation." \
 		--output tools/qwen3-tts-onnx/fixtures/ref_clone.wav \
 		"$(CLONE_REF_TEXT)"
