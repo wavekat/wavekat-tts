@@ -25,3 +25,12 @@ pub enum TtsError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
+
+impl From<wavekat_core::CoreError> for TtsError {
+    fn from(err: wavekat_core::CoreError) -> Self {
+        match err {
+            wavekat_core::CoreError::Io(io) => Self::Io(io),
+            wavekat_core::CoreError::Audio(msg) => Self::Synthesis(msg),
+        }
+    }
+}

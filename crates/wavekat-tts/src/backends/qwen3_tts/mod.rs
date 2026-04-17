@@ -278,7 +278,7 @@ impl<'a> CloneRequest<'a> {
 /// );
 /// let audio = tts.synthesize_clone(&req)?;
 /// audio.write_wav("clone_output.wav")?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # Ok::<(), wavekat_tts::TtsError>(())
 /// ```
 ///
 /// Use [`Qwen3TtsClone::from_config`] with [`ModelConfig`] to select FP32
