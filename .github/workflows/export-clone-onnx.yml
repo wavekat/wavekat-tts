@@ -1,0 +1,127 @@
+name: Export Clone ONNX & Publish to HuggingFace
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_id:
+        description: "HuggingFace source model"
+        default: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+        type: string
+      hf_repo:
+        description: "Target HuggingFace repo (org/name)"
+        default: "wavekat/Qwen3-TTS-0.6B-Base-ONNX"
+        type: string
+      runner:
+        description: "GitHub Actions runner label"
+        default: "ubuntu-latest"
+        type: string
+      skip_validation:
+        description: "Skip PyTorch vs ONNX validation"
+        default: false
+        type: boolean
+      revision:
+        description: "HuggingFace revision/branch to push to. Defaults to main."
+        default: ""
+        type: string
+
+jobs:
+  export-and-publish:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+
+    steps:
+      - name: Free disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /usr/local/graalvm \
+            /usr/local/share/chromium \
+            /usr/local/lib/node_modules \
+            /usr/share/swift \
+            /opt/hostedtoolcache
+          sudo apt-get clean
+          echo "=== After cleanup ==="
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y sox libsox-dev
+
+      - name: Install dependencies
+        working-directory: tools/qwen3-tts-onnx
+        run: make venv
+
+      - name: Export FP32 ONNX models (6 components)
+        working-directory: tools/qwen3-tts-onnx
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          make clone-export CLONE_MODEL_ID="${{ inputs.model_id }}"
+          echo "=== Disk after export ==="
+          df -h /
+
+      - name: Validate exports against PyTorch
+        if: ${{ !inputs.skip_validation }}
+        working-directory: tools/qwen3-tts-onnx
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: make validate MODEL_ID="${{ inputs.model_id }}" OUTPUT_DIR="./output/qwen3-tts-0.6b-base"
+
+      - name: Free PyTorch model cache
+        run: |
+          rm -rf ~/.cache/huggingface/hub
+          echo "=== Disk after cache cleanup ==="
+          df -h /
+
+      - name: Quantize to INT4
+        working-directory: tools/qwen3-tts-onnx
+        run: |
+          make clone-base-preset CLONE_MODEL_ID="${{ inputs.model_id }}"
+          echo "=== Disk after quantize ==="
+          df -h /
+
+      - name: Package for HuggingFace
+        working-directory: tools/qwen3-tts-onnx
+        run: make clone-hf
+
+      - name: Upload to HuggingFace
+        working-directory: tools/qwen3-tts-onnx
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          .venv/bin/pip install -q huggingface_hub
+          REVISION="${{ inputs.revision }}"
+          .venv/bin/huggingface-cli upload \
+            "${{ inputs.hf_repo }}" \
+            ./output/qwen3-tts-0.6b-base/ \
+            --repo-type model \
+            --commit-message "export: ${{ inputs.model_id }} (run #${{ github.run_number }})" \
+            ${REVISION:+--revision "$REVISION"}
+
+      - name: Job summary
+        if: always()
+        run: |
+          REVISION="${{ inputs.revision }}"
+          REVISION_DISPLAY="${REVISION:-main}"
+          HF_URL="https://huggingface.co/${{ inputs.hf_repo }}/tree/${REVISION_DISPLAY}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Clone ONNX Export Summary
+
+          | | |
+          |---|---|
+          | **Source model** | \`${{ inputs.model_id }}\` |
+          | **HuggingFace repo** | [${{ inputs.hf_repo }}](${HF_URL}) |
+          | **Revision** | \`${REVISION_DISPLAY}\` |
+          | **Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+          | **Validation** | ${{ inputs.skip_validation && 'skipped' || 'passed' }} |
+          EOF
