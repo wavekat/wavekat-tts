@@ -113,14 +113,17 @@ fn main() {
     // Read reference audio WAV
     eprintln!("Reading reference audio: {} ...", ref_audio_path.display());
     let ref_audio = AudioFrame::from_wav(&ref_audio_path).expect("failed to read reference WAV");
-    if ref_audio.sample_rate() != 24000 {
+    let ref_audio = if ref_audio.sample_rate() != 24000 {
         eprintln!(
-            "error: reference audio must be 24 kHz, got {} Hz",
+            "  resampling from {} Hz to 24000 Hz ...",
             ref_audio.sample_rate()
         );
-        eprintln!("hint: resample with: ffmpeg -i input.wav -ar 24000 -ac 1 ref_24k.wav");
-        std::process::exit(1);
-    }
+        ref_audio
+            .resample(24000)
+            .expect("failed to resample reference audio")
+    } else {
+        ref_audio
+    };
     eprintln!(
         "  {:.1}s, {} Hz, {} samples",
         ref_audio.duration_secs(),
