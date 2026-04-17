@@ -74,7 +74,8 @@ use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneRequest};
 // use wavekat_tts::backends::qwen3_tts::{ModelConfig, ModelPrecision};
 
 fn main() {
-    let ref_audio = AudioFrame::from_wav("ref.wav").unwrap(); // 24 kHz mono WAV
+    let ref_audio = AudioFrame::from_wav("ref.wav").unwrap();
+    let ref_audio = ref_audio.resample(24000).unwrap(); // resample to 24 kHz (no-op if already 24 kHz)
     let tts = Qwen3TtsClone::new().unwrap(); // auto-downloads 0.6B Base INT4 model
 
     // For FP32 precision:
