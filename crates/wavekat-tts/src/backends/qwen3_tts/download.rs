@@ -193,9 +193,11 @@ const CLONE_ONNX_FILES_FP32: &[&str] = &[
 /// Shared files for the 0.6B Base clone variant (includes speaker/tokenizer encoders).
 const CLONE_SHARED_FILES: &[&str] = &[
     "config.json",
-    // FP32-only encoders for voice clone conditioning
+    // FP32-only encoders for voice clone conditioning (with external data)
     "speaker_encoder.onnx",
+    "speaker_encoder.onnx.data",
     "tokenizer_encoder.onnx",
+    "tokenizer_encoder.onnx.data",
     // Embedding tables
     "embeddings/text_embedding.npy",
     "embeddings/text_projection_fc1_weight.npy",

@@ -1,28 +1,27 @@
-# Qwen3-TTS 0.6B Voice Clone (Plan)
+# Qwen3-TTS 0.6B Voice Clone
 
-> **Status: Planning** — no implementation yet. This doc captures the approach
-> before any code is written so we can review it.
+> **Status: Implemented** — all planned work is complete. This doc describes the
+> design and what was built.
 
 ## Goal
 
-Add a second variant of the Qwen3-TTS backend that performs **voice cloning**
-from a reference audio clip (3–10 s) plus its transcript, using the
+A second variant of the Qwen3-TTS backend that performs **voice cloning** from a
+reference audio clip (3–10 s) plus its transcript, using the
 [`Qwen/Qwen3-TTS-12Hz-0.6B-Base`][hf-base] checkpoint.
 
-We keep the existing 1.7B VoiceDesign backend untouched. The two coexist behind
-the same `Qwen3Tts` Rust struct (selectable via `ModelConfig`), or we expose a
-sibling `Qwen3TtsClone` struct — see "Rust API surface" below.
+The existing 1.7B VoiceDesign backend is untouched. The two coexist as sibling
+structs: `Qwen3Tts` (1.7B VoiceDesign) and `Qwen3TtsClone` (0.6B Base).
 
 The user provides:
 
 - `text` — what to say
-- `language` — target language
-- `ref_audio` — short waveform (path, URL, or PCM samples)
-- `ref_text` — transcript of `ref_audio` (required for ICL mode)
+- `ref_samples` — short waveform (24 kHz mono float32 PCM)
+- `ref_text` — transcript of the reference audio (required for ICL mode)
+- `language` — target language (optional, defaults to `"en"`)
 
-The model returns audio in the cloned voice. We focus on the **0.6B** size for
-this first pass; the 1.7B Base variant uses the same architecture and can be
-added later by swapping model files.
+The model returns audio in the cloned voice. This first pass covers the **0.6B**
+size; the 1.7B Base variant uses the same architecture and can be added later by
+swapping model files.
 
 ## Why a separate variant
 
@@ -121,22 +120,21 @@ the leading portion proportional to `ref_len / total_len` so the returned
 waveform contains only the new content. (See lines 612–631 in
 `qwen3_tts_model.py`.)
 
-## What ONNX assets we need
+## ONNX assets
 
-The 0.6B Base repo gives us a different talker checkpoint plus extra modules
-(speaker encoder, tokenizer encoder). We export them like the existing 1.7B
-pipeline.
+The 0.6B Base checkpoint provides a different talker plus extra modules (speaker
+encoder, tokenizer encoder). All are exported via `tools/qwen3-tts-onnx/`.
 
-### Reused (export with the same scripts, smaller dims)
+### Reused (re-exported with smaller dims)
 
 | File | Notes |
 |---|---|
-| `talker_prefill.onnx` | hidden=1024, vocab=3072, 28 layers, 8 KV heads — re-run `export_talker.py` against the Base repo |
+| `talker_prefill.onnx` | hidden=1024, vocab=3072, 28 layers, 8 KV heads |
 | `talker_decode.onnx`  | same |
-| `code_predictor.onnx` | unchanged across variants (1024 hidden, 5 layers) |
-| `vocoder.onnx`        | same Mimi v2 decoder |
-| `embeddings/text_embedding.npy` etc. | re-extract from Base weights |
-| `embeddings/cp_codec_embedding_0..14.npy` | re-extract |
+| `code_predictor.onnx` | 1024 hidden, 5 layers |
+| `vocoder.onnx`        | Mimi v2 decoder |
+| `embeddings/text_embedding.npy` etc. | re-extracted from Base weights |
+| `embeddings/cp_codec_embedding_0..14.npy` | re-extracted |
 
 ### New for voice clone
 
@@ -145,192 +143,182 @@ pipeline.
 | `speaker_encoder.onnx` | `model.speaker_encoder` (ECAPA-TDNN) | in: `(1, T_mel, 128)` mel; out: `(1, 1024)` | Encode ref audio → speaker embed |
 | `tokenizer_encoder.onnx` | `model.speech_tokenizer.encode()` | in: `(1, 1, S_audio)` waveform; out: `(1, T_codes, 16)` i64 | Encode ref audio → ref codes |
 
-Mel computation stays in host code (a Rust port — STFT + mel filterbank). It is
-deterministic and small; not worth a separate ONNX. We use the same params as
-the reference: `n_fft=1024, hop=256, win=1024, n_mels=128, fmin=0, fmax=12000`,
-`center=False`, log on top.
+Mel computation is done in host code (pure-Rust STFT + mel filterbank in
+`mel.rs`) rather than a separate ONNX. Params match the reference exactly:
+`n_fft=1024, hop=256, win=1024, n_mels=128, fmin=0, fmax=12000`, `center=False`,
+log on top.
 
-### Optional: keep host code lighter with a combined `clone_preprocessor.onnx`
+### Export tooling
 
-Decision deferred. Splitting keeps each ONNX small and lets us swap mel impls.
+`tools/qwen3-tts-onnx/` contains:
 
-## ONNX export plan
+- `export_speaker_encoder.py` — ECAPA-TDNN, dynamic axis on mel time dim,
+  opset 17. Validates against PyTorch (atol=1e-4).
+- `export_tokenizer_encoder.py` — Mimi-based tokenizer encoder. Uses JIT trace
+  with fixed size (240k samples = 10 s @ 24 kHz). Applies `mask_patch.py` to
+  handle Mimi's causal mask incompatibility with tracing. Validates exact i64
+  code match.
+- `mask_patch.py` — patches Mimi causal mask for JIT tracing compatibility.
+- `generate_clone_onnx.py` — end-to-end Python ONNX voice clone reference
+  (547 lines). Loads all 6 ONNX sessions, builds ICL prefill, runs decode loop,
+  vocoders, and trims the reference portion.
+- Existing `export_talker.py`, `export_code_predictor.py`, `export_vocoder.py`,
+  `export_embeddings.py` are reused with `MODEL_ID=Qwen/Qwen3-TTS-12Hz-0.6B-Base`.
+- `quantize_int4.py` quantizes talker/CP/vocoder; speaker and tokenizer encoders
+  stay FP32 (small, conditioning path — no upside to quantizing).
 
-Add to `tools/qwen3-tts-onnx/`:
-
-1. `export_speaker_encoder.py` — wrap `model.speaker_encoder` (forward expects
-   mel `(B, T_mel, 128)`), trace with dynamic axis on `T_mel`, opset 17.
-2. `export_tokenizer_encoder.py` — wrap `model.speech_tokenizer.encode()`. The
-   encoder is `MimiModel`-based (transformers); it traces cleanly with dynamo.
-   Dynamic axis on the audio sample dim. Output the per-frame code matrix only
-   (drop the `Qwen3TTSTokenizerV2EncoderOutput` wrapper).
-3. Re-use `export_talker.py`, `export_code_predictor.py`, `export_vocoder.py`,
-   `export_embeddings.py` against `MODEL_ID=Qwen/Qwen3-TTS-12Hz-0.6B-Base`.
-   They already read dimensions from the loaded config, so should "just work";
-   if not, the dim-handling is a small patch.
-4. `quantize_int4.py` — extend to also quantize the new
-   `speaker_encoder.onnx` / `tokenizer_encoder.onnx` (or skip; they're tiny).
-5. `validate.py` — add a stage that compares speaker-encoder + tokenizer-encoder
-   outputs against PyTorch with `atol=1e-4`, then runs an end-to-end voice
-   clone against the reference Python pipeline.
-6. `Makefile` — add a `MODEL_PRESET = clone-0.6b` switch (or just document
-   `make all MODEL_ID=Qwen/Qwen3-TTS-12Hz-0.6B-Base OUTPUT_DIR=...`).
-
-The published HF repo will be `wavekat/Qwen3-TTS-0.6B-Base-ONNX` (new — kept
-separate from the existing 1.7B repo since it's a different checkpoint and
-ships extra modules), with the same `int4/`, `fp32/`, `embeddings/`,
-`tokenizer/` layout plus a top-level `speaker_encoder.onnx` and
-`tokenizer_encoder.onnx`. The two encoders ship as **FP32 only** — they're
-small (≪ 100 MB combined) and we don't want to risk quality loss on the
-condition signal.
-
-## Rust backend changes
-
-### New module structure
+### Makefile targets
 
 ```
-src/backends/qwen3_tts/
-├── mod.rs              — Qwen3Tts (existing); add Qwen3TtsClone
-├── download.rs         — extend MODEL_FILES per variant
+make clone-all              # full export + quantize + HF packaging
+make clone-export           # orchestrate 6 component exports
+make clone-base-preset      # INT4 quantization (encoders stay FP32)
+make clone-hf               # package for HF Hub
+make clone-fixture          # regenerate ref WAV fixture
+make clone-generate         # test FP32 output
+```
+
+### Published HF repo
+
+[`wavekat/Qwen3-TTS-0.6B-Base-ONNX`](https://huggingface.co/wavekat/Qwen3-TTS-0.6B-Base-ONNX)
+— separate from the existing 1.7B repo. Layout:
+
+```
+speaker_encoder.onnx          FP32 only
+tokenizer_encoder.onnx        FP32 only
+fp32/                         talker_prefill, talker_decode, code_predictor, vocoder
+int4/                         same (INT4 quantized)
+embeddings/                   text_embedding, text_projection, codec embeddings
+tokenizer/                    vocab.json, merges.txt
+config.json
+```
+
+## Rust backend
+
+### Module structure
+
+```
+crates/wavekat-tts/src/backends/qwen3_tts/
+├── mod.rs              — Qwen3Tts (1.7B) + Qwen3TtsClone (0.6B) + CloneRequest
+├── download.rs         — resolve_model_dir + resolve_clone_model_dir
 ├── model.rs            — existing talker/CP/vocoder pipeline (untouched)
-├── clone_model.rs      — NEW: voice-clone-specific ONNX + prefill builder
-├── speaker_encoder.rs  — NEW: ONNX session for speaker encoder + mel computation
-├── tokenizer.rs        — unchanged
-└── sampler.rs          — unchanged
+├── clone_model.rs      — CloneModel: 6 ONNX sessions + ICL prefill builder
+├── mel.rs              — pure-Rust STFT + mel filterbank (realfft)
+├── tokenizer.rs        — shared text tokenization (unchanged)
+└── sampler.rs          — shared sampling logic (unchanged)
 ```
 
 ### Public API
 
-Sibling struct + dedicated request type. Keeps the existing `Qwen3Tts` /
-`TtsBackend` surface untouched and avoids smuggling reference-clip state
-through `SynthesizeRequest`.
-
 ```rust
-use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneConfig, CloneRequest};
+use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneRequest, ModelConfig};
 
 let tts = Qwen3TtsClone::new()?;                          // 0.6B Base, INT4, CPU
-let pcm = wavekat_tts::audio::read_wav("ref.wav")?;
-let req = CloneRequest::new("New text to say", &pcm)
-    .with_ref_text("transcript of ref.wav")
+let req = CloneRequest::new("Text to say", &pcm_24k, 24000, "transcript of ref")
     .with_language("en");
-let frame: AudioFrame = tts.synthesize(&req)?;
+let frame: AudioFrame = tts.synthesize_clone(&req)?;
 ```
 
-`Qwen3TtsClone` implements an additional trait or just exposes
-`fn synthesize(&self, req: &CloneRequest) -> Result<AudioFrame, TtsError>`. The
-existing `TtsBackend` contract doesn't fit cleanly because it has no place for
-a reference clip; we don't try to shoehorn it in.
+`Qwen3TtsClone` exposes `fn synthesize_clone(&self, req: &CloneRequest) ->
+Result<AudioFrame<'static>, TtsError>`. The existing `TtsBackend` contract
+doesn't fit (no place for a reference clip), so `Qwen3TtsClone` has its own
+method rather than implementing `TtsBackend`.
 
 `CloneRequest`:
 ```rust
 pub struct CloneRequest<'a> {
     pub text: &'a str,
-    pub ref_audio: &'a AudioFrame<'a>,   // any sr; we resample to 24k internally
-    pub ref_text: Option<&'a str>,       // None ⇒ x_vector_only_mode
-    pub language: Option<&'a str>,
+    pub ref_samples: &'a [f32],     // 24 kHz mono float32 PCM
+    pub ref_sample_rate: u32,       // must be 24000
+    pub ref_text: &'a str,          // required for ICL mode
+    pub language: Option<&'a str>,  // defaults to "en"
 }
 ```
 
-`CloneConfig` mirrors `ModelConfig` (precision, EP, model dir).
+`ModelConfig` is shared between both backends (precision, EP, model dir).
 
-### New code paths
+### Implementation
 
-1. `speaker_encoder.rs` — load `speaker_encoder.onnx`; expose
-   `fn embed(&self, pcm_24k: &[f32]) -> Result<Array1<f32>, TtsError>` that
-   computes the mel and runs the session.
-2. `clone_model.rs::encode_ref_codes(pcm_24k) -> Array2<i64>` — runs
-   `tokenizer_encoder.onnx`.
-3. `clone_model.rs::build_prefill_embeds_clone(...)` — replaces
-   `model::Model::build_prefill_embeds`. Takes the speaker embed, ref codes,
-   ref-text tokens, and target-text tokens; produces the `(1, T, 1024)` tensor
-   following the layout in "Prefill embedding construction" above.
-4. The decode loop in `model.rs` is reusable — we factor it into a helper that
-   both pipelines call (`run_decode_loop(&self, prefill_embeds, ...)`).
-5. `run_vocoder` is reused, but we prepend `ref_codes` before vocoding and trim
-   the leading portion from the resulting waveform (proportional cut, like the
-   reference Python does).
+`clone_model.rs` (`CloneModel`) handles the full pipeline:
+
+1. **`encode_speaker()`** — computes mel spectrogram via `mel.rs`, runs
+   `speaker_encoder.onnx` → `(1, 1024)` speaker embedding.
+2. **`encode_ref_codes()`** — runs `tokenizer_encoder.onnx` on raw PCM →
+   `(T_ref, 16)` i64 codebook indices.
+3. **`build_icl_prefill()`** — constructs the prefill embedding tensor:
+   role prefix → codec prefix → speaker slot → transition → ICL block
+   (text + codec interleaving). Produces `(1, T, 1024)`.
+4. **`run_talker_prefill()` / `run_talker_decode()`** — talker pipeline
+   (same structure as 1.7B, adapted to 1024-dim hidden).
+5. **`run_code_predictor()`** — predicts codec groups 1–15 from group 0.
+6. **`run_vocoder_clone()`** — prepends ref codes before vocoding, then trims
+   the leading portion proportional to `ref_len / total_len`.
 
 ### Mel-spectrogram in Rust
 
-We need an STFT + mel filterbank with the exact params above. Two options:
+`mel.rs` — pure-Rust implementation using `realfft`:
+- `MelSpectrogram` struct with precomputed Hann window + Slaney mel filterbank
+- `.compute(audio) → (T, 128)` log-mel frames
+- Params match the reference: `n_fft=1024, hop=256, win=1024, n_mels=128,
+  fmin=0, fmax=12000, center=False`
+- Unit tests for scale roundtrip, filterbank shape, output shape
 
-- **Pure Rust**: `rustfft` + `realfft`, hand-rolled mel filterbank constants.
-  ~150 lines. We control numerics.
-- **Dependency**: `librosa-rs` / `aubio-rs`. Heavier; mismatched defaults.
+### Audio I/O and resampling
 
-Going with **pure Rust**. We add a tiny `mel.rs` module with constants matching
-the reference (`HiFi-GAN`-style mel from `mel_spectrogram(...)` in
-`modeling_qwen3_tts.py`). Validation: bit-identity with the Python output for a
-fixed test waveform, atol=1e-4.
+`CloneRequest` takes raw `&[f32]` PCM samples. Reading WAV files is the
+caller's responsibility (example uses `hound`). Sample rate must be 24 kHz —
+validated at runtime with a clear error. Resampling is not done internally;
+callers resample before calling.
 
-### Audio I/O
+## Example
 
-`CloneRequest` takes an `AudioFrame`. To read a WAV from disk, callers use
-`hound` or `wavekat-core` helpers. We do **not** add file-loading to the
-backend itself; that stays at the example/binding layer.
+`examples/synthesize_clone.rs` — full CLI example (165 lines) with `--ref-audio`,
+`--ref-text`, `--text`, `--language`, `--precision`, `--provider` flags. Reads a
+24 kHz mono WAV, runs `Qwen3TtsClone::synthesize_clone`, writes output, and
+prints RTF.
 
-### Resampling
+## CI
 
-Reference clips will not be 24 kHz in general. We resample to 24 kHz inside
-`Qwen3TtsClone::synthesize` using `rubato` (already a transitive dep via
-wavekat-core, IIRC; if not, add it). High-quality sinc resampling is fine for
-an offline preprocessing step on a short clip.
+`.github/workflows/export-onnx.yml` — unified workflow with a variant selector
+dropdown (`voicedesign` | `clone`). The `clone` variant runs `clone-export`,
+`clone-base-preset` (INT4 quantization, encoders FP32), and `clone-hf`
+(HF Hub packaging). Conditional validation and cleanup between steps for
+runner disk space.
 
-## Examples
+## Verification
 
-Add `examples/synthesize_clone.rs`:
-
-```rust
-use wavekat_core::{AudioFrame, wav::read_wav};
-use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneRequest};
-
-fn main() -> anyhow::Result<()> {
-    let tts = Qwen3TtsClone::new()?;
-    let ref_audio = read_wav("ref.wav")?;
-    let req = CloneRequest::new(
-        "I am solving the equation x = (-b ± √(b²-4ac)) / 2a.",
-        &ref_audio,
-    )
-    .with_ref_text("Okay. Yeah. I resent you. I love you. I respect you.")
-    .with_language("en");
-
-    let out: AudioFrame = tts.synthesize(&req)?;
-    wavekat_core::wav::write_wav("clone_out.wav", &out)?;
-    Ok(())
-}
-```
-
-## Verification plan
-
-1. **Per-component parity** (in `tools/qwen3-tts-onnx/validate.py`):
+1. **Per-component parity** (in export scripts):
    - speaker_encoder ONNX vs PyTorch on a fixed mel: max abs err < 1e-4
    - tokenizer_encoder ONNX vs PyTorch on a fixed wav: identical i64 codes
-2. **End-to-end ONNX (Python) vs PyTorch reference**:
-   - Greedy decode (`do_sample=False`) over same text/ref → identical talker
-     code sequences for first ~50 frames (sampling drift past that is fine).
-   - Audio SNR > 35 dB.
-3. **End-to-end Rust (`Qwen3TtsClone`) vs Python ONNX**:
-   - Same prefill embed tensor (atol 1e-4) on the first decode step.
-   - Manual listening on 5+ samples covering en/zh/ja.
-4. **Smoke test**: example runs to completion on the published `clone.wav` ref
-   clip; saved WAV plays the cloned voice.
+2. **End-to-end ONNX (Python)** via `generate_clone_onnx.py`:
+   - Loads all 6 ONNX sessions, builds ICL prefill, runs decode + vocoder
+   - Supports FP32 and INT4 variants, all 10 languages
+3. **Rust vs Python parity**:
+   - Same ICL prefill layout, same vocoder trim logic
+4. **Reference fixture**: `tools/qwen3-tts-onnx/fixtures/ref_clone.wav` for
+   integration tests and examples.
 
-## Out of scope (for this PR)
-
-- 1.7B Base voice clone (mechanically the same; future patch flips a model dir)
-- `x_vector_only_mode` (no `ref_text`) — we'll add after ICL works
-- Streaming voice clone — the Python reference simulates streaming; we stay
-  non-streaming to match the existing VoiceDesign path
-- True batch inference
-
-## Decisions locked
+## Decisions made
 
 1. **API shape**: sibling struct `Qwen3TtsClone` + `CloneRequest`. Existing
    `Qwen3Tts` and `TtsBackend` unchanged.
 2. **Speaker / tokenizer encoder precision**: FP32 only. They're small and
    sit on the conditioning path — no upside to quantizing.
-3. **HF repo**: publish a fresh `wavekat/Qwen3-TTS-0.6B-Base-ONNX`. Do not
-   reuse the 1.7B repo.
+3. **HF repo**: separate `wavekat/Qwen3-TTS-0.6B-Base-ONNX` (does not reuse
+   the 1.7B repo).
+4. **Mel in host code**: pure-Rust (`realfft`) rather than a separate ONNX
+   model. Deterministic, small, and avoids an extra session.
+5. **No internal resampling**: callers must provide 24 kHz audio. Keeps the
+   backend simple and avoids pulling in `rubato`.
+6. **Tokenizer encoder uses fixed-size JIT trace** (240k samples) rather than
+   dynamic axes, due to Mimi causal mask incompatibility with tracing.
+
+## Future work
+
+- 1.7B Base voice clone (same architecture; swap model dir)
+- `x_vector_only_mode` (no `ref_text`) — speaker-embedding-only conditioning
+- Streaming voice clone
+- True batch inference
 
 [hf-base]: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base
 [gen_clone]: https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py

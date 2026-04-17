@@ -116,13 +116,17 @@ impl CloneModel {
         let vocoder = load_session("vocoder.onnx", &onnx_dir)?;
         eprintln!("done");
 
-        // Speaker encoder and tokenizer encoder are FP32-only, stored at model root
+        // Speaker encoder and tokenizer encoder are FP32-only, stored at model root.
+        // They have external .data files, so we need prepare_onnx_dir to resolve
+        // HF Hub symlinks (same issue as the talker models).
+        let root_dir = prepare_onnx_dir(model_dir)?;
+
         eprint!("Loading speaker encoder    ... ");
-        let speaker_encoder = load_session("speaker_encoder.onnx", model_dir)?;
+        let speaker_encoder = load_session("speaker_encoder.onnx", &root_dir)?;
         eprintln!("done");
 
         eprint!("Loading tokenizer encoder  ... ");
-        let tokenizer_encoder = load_session("tokenizer_encoder.onnx", model_dir)?;
+        let tokenizer_encoder = load_session("tokenizer_encoder.onnx", &root_dir)?;
         eprintln!("done");
 
         eprint!("Loading embeddings         ... ");

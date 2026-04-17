@@ -665,6 +665,10 @@ pub(super) fn prepare_onnx_dir(onnx_dir: &Path) -> Result<std::path::PathBuf, Tt
 
     for entry in &entries {
         let src = entry.path();
+        // Skip directories — we only need to resolve file symlinks.
+        if src.is_dir() {
+            continue;
+        }
         let dst = resolved.join(entry.file_name());
         if dst.exists() {
             continue;
