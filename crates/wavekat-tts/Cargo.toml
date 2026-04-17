@@ -13,7 +13,7 @@ categories = ["multimedia::audio"]
 default = []
 
 # Local inference backends (all ONNX-based)
-qwen3-tts = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:npyz", "dep:rand", "dep:hf-hub"]
+qwen3-tts = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:npyz", "dep:rand", "dep:hf-hub", "dep:realfft"]
 cosyvoice = ["dep:ort", "dep:ndarray"]
 
 # Execution providers — composable with any ONNX backend feature
@@ -34,9 +34,14 @@ tokenizers = { version = "0.21", optional = true, default-features = false, feat
 npyz = { version = "0.8", optional = true }
 rand = { version = "0.9", optional = true }
 hf-hub = { version = "0.5", optional = true, default-features = false, features = ["ureq"] }
+realfft = { version = "3", optional = true }
 
 [[example]]
 name = "synthesize"
+required-features = ["qwen3-tts"]
+
+[[example]]
+name = "synthesize_clone"
 required-features = ["qwen3-tts"]
 
 [[example]]

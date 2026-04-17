@@ -104,7 +104,7 @@ clean: ## Remove output directory
 CLONE_MODEL_ID  ?= Qwen/Qwen3-TTS-12Hz-0.6B-Base
 CLONE_OUTPUT_DIR ?= ./output/qwen3-tts-0.6b-base
 
-clone-all: clone-export clone-base-preset ## Full 0.6B Base voice clone export + INT4 (no validate yet)
+clone-all: clone-export clone-base-preset clone-hf ## Full 0.6B Base export + INT4 + HF packaging
 
 clone-export: ## Export all ONNX models for the 0.6B Base voice clone variant
 	@echo "\n[1/6] Embeddings, config, tokenizer ..."
@@ -120,6 +120,13 @@ clone-export: ## Export all ONNX models for the 0.6B Base voice clone variant
 	@echo "\n[6/6] Tokenizer encoder (Mimi) ..."
 	$(MAKE) tokenizer-encoder MODEL_ID=$(CLONE_MODEL_ID) OUTPUT_DIR=$(CLONE_OUTPUT_DIR)
 	@echo "\nAll 0.6B Base clone exports complete."
+
+clone-hf: ## Package 0.6B Base clone output for Hugging Face upload
+	@echo "Packaging 0.6B Base clone for Hugging Face..."
+	sed 's|./output/qwen3-tts-0.6b-base|.|' generate_clone_onnx.py > $(CLONE_OUTPUT_DIR)/generate_clone_onnx.py
+	printf 'onnxruntime>=1.24.0\nnumpy>=2.0\nsoundfile>=0.13\ntransformers>=4.57.0\nlibrosa>=0.10\n' > $(CLONE_OUTPUT_DIR)/requirements.txt
+	printf '*.onnx filter=lfs diff=lfs merge=lfs -text\n*.onnx.data filter=lfs diff=lfs merge=lfs -text\n*.npy filter=lfs diff=lfs merge=lfs -text\n' > $(CLONE_OUTPUT_DIR)/.gitattributes
+	@echo "Done: $(CLONE_OUTPUT_DIR) is ready for 'huggingface-cli upload'"
 
 clone-base-preset: ## INT4 quantize the talker/CP for the 0.6B Base build (encoders stay FP32)
 	@echo "\nQuantizing talker + CP to INT4 (speaker/tokenizer encoders stay FP32) ..."

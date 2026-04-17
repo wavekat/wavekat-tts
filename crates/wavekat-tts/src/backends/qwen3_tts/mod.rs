@@ -1,27 +1,30 @@
-//! Qwen3-TTS backend (ONNX, 1.7B VoiceDesign).
+//! Qwen3-TTS backends (ONNX).
 //!
-//! Runs the Qwen3-TTS-12Hz-1.7B-VoiceDesign model via ONNX Runtime.
-//! Supports INT4 (weight-only quantized, default) and FP32 precision.
+//! Two sibling structs:
+//!
+//! - [`Qwen3Tts`] — 1.7B VoiceDesign (prompt-based voice styling)
+//! - [`Qwen3TtsClone`] — 0.6B Base (reference-audio voice cloning)
+//!
+//! # VoiceDesign (1.7B)
 //!
 //! ```ignore
 //! use wavekat_tts::{TtsBackend, SynthesizeRequest};
 //! use wavekat_tts::backends::qwen3_tts::{Qwen3Tts, ModelConfig, ModelPrecision, ExecutionProvider};
 //!
-//! // Auto-download INT4 model files via HF Hub, run on CPU (default):
 //! let tts = Qwen3Tts::new()?;
-//!
-//! // Auto-download FP32, run on CPU:
-//! let tts = Qwen3Tts::from_config(ModelConfig::default().with_precision(ModelPrecision::Fp32))?;
-//!
-//! // INT4 from a local directory, run on CUDA:
-//! let tts = Qwen3Tts::from_config(
-//!     ModelConfig::default()
-//!         .with_dir("models/qwen3-tts-1.7b")
-//!         .with_execution_provider(ExecutionProvider::Cuda),
-//! )?;
-//!
 //! let request = SynthesizeRequest::new("Hello, world");
 //! let audio = tts.synthesize(&request)?;
+//! ```
+//!
+//! # Voice Clone (0.6B)
+//!
+//! ```ignore
+//! use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneRequest, ModelConfig};
+//!
+//! let tts = Qwen3TtsClone::new()?;
+//! let ref_audio: Vec<f32> = todo!("24 kHz mono PCM");
+//! let req = CloneRequest::new("Text to say", &ref_audio, 24000, "Transcript of ref audio");
+//! let audio = tts.synthesize_clone(&req)?;
 //! ```
 
 use std::path::PathBuf;
@@ -38,7 +41,9 @@ use tokenizer::{IM_END, IM_START, NEWLINE};
 
 static WARNED_NO_INSTRUCTION: Once = Once::new();
 
+mod clone_model;
 mod download;
+mod mel;
 mod model;
 mod sampler;
 mod tokenizer;
@@ -171,6 +176,103 @@ impl Qwen3Tts {
         Ok(Self { model, tokenizer })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Voice Clone (0.6B Base)
+// ---------------------------------------------------------------------------
+
+/// A voice-clone synthesis request.
+///
+/// Requires a reference audio clip (3–10 s, mono) and its transcript. The
+/// model produces speech in the cloned voice speaking `text`.
+///
+/// Reference audio **must be 24 kHz mono float32 PCM**. If your audio is at
+/// a different sample rate, resample before passing it in.
+#[derive(Debug, Clone)]
+pub struct CloneRequest<'a> {
+    /// Text to synthesize in the cloned voice.
+    pub text: &'a str,
+    /// Reference audio samples (24 kHz mono float32).
+    pub ref_samples: &'a [f32],
+    /// Sample rate of `ref_samples` (must be 24000).
+    pub ref_sample_rate: u32,
+    /// Transcript of the reference audio (required for ICL mode).
+    pub ref_text: &'a str,
+    /// Language code (e.g. `"en"`, `"zh"`). `None` defaults to `"en"`.
+    pub language: Option<&'a str>,
+}
+
+impl<'a> CloneRequest<'a> {
+    /// Create a clone request with all required fields.
+    pub fn new(
+        text: &'a str,
+        ref_samples: &'a [f32],
+        ref_sample_rate: u32,
+        ref_text: &'a str,
+    ) -> Self {
+        Self {
+            text,
+            ref_samples,
+            ref_sample_rate,
+            ref_text,
+            language: None,
+        }
+    }
+
+    /// Set the language code.
+    pub fn with_language(mut self, language: &'a str) -> Self {
+        self.language = Some(language);
+        self
+    }
+}
+
+/// Qwen3-TTS 0.6B Base voice-clone backend using ONNX Runtime.
+///
+/// Clones a speaker's voice from a short reference clip (3–10 s) and its
+/// transcript, then synthesizes new text in that voice.
+pub struct Qwen3TtsClone {
+    model: clone_model::CloneModel,
+    tokenizer: tokenizer::Tokenizer,
+}
+
+impl Qwen3TtsClone {
+    /// Create a new clone backend with default config (INT4, CPU, auto-download).
+    pub fn new() -> Result<Self, TtsError> {
+        Self::from_config(ModelConfig::default())
+    }
+
+    /// Create a new clone backend with the given [`ModelConfig`].
+    pub fn from_config(config: ModelConfig) -> Result<Self, TtsError> {
+        let model_dir = download::resolve_clone_model_dir(&config)?;
+        let model = clone_model::CloneModel::load(model_dir.as_ref(), &config)?;
+        let tokenizer = tokenizer::Tokenizer::new(&model_dir)?;
+        Ok(Self { model, tokenizer })
+    }
+
+    /// Synthesize text in a cloned voice.
+    pub fn synthesize_clone(
+        &self,
+        request: &CloneRequest,
+    ) -> Result<AudioFrame<'static>, TtsError> {
+        if request.ref_sample_rate != 24000 {
+            return Err(TtsError::Synthesis(format!(
+                "reference audio must be 24 kHz, got {} Hz",
+                request.ref_sample_rate,
+            )));
+        }
+
+        let language = request.language.unwrap_or("en");
+        let ref_tokens = self.tokenizer.encode(request.ref_text)?;
+        let text_tokens = self.tokenizer.encode(request.text)?;
+
+        self.model
+            .synthesize(request.ref_samples, &ref_tokens, &text_tokens, language)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TtsBackend for Qwen3Tts (1.7B VoiceDesign)
+// ---------------------------------------------------------------------------
 
 impl TtsBackend for Qwen3Tts {
     fn synthesize(&self, request: &SynthesizeRequest) -> Result<AudioFrame<'static>, TtsError> {
