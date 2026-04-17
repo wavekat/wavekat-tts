@@ -131,7 +131,7 @@ CLONE_REF_TEXT  ?= Okay. Yeah. I resent you. I love you. I respect you. But you 
 clone-fixture: ## Regenerate fixtures/ref_clone.wav via wavekat-tts (1.7B VoiceDesign)
 	@mkdir -p fixtures
 	cd ../.. && cargo run --release --example synthesize --features qwen3-tts -- \
-		--instruction "Speak naturally and clearly." \
+		--instruction "Speak in a warm and friendly female voice with natural intonation." \
 		--output tools/qwen3-tts-onnx/fixtures/ref_clone.wav \
 		"$(CLONE_REF_TEXT)"
 
