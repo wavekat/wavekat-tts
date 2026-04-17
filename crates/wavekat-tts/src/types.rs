@@ -100,7 +100,10 @@ pub struct VoiceInfo {
 /// Voice gender hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Gender {
+    /// Male voice.
     Male,
+    /// Female voice.
     Female,
+    /// Gender-neutral or unspecified voice.
     Neutral,
 }

@@ -92,7 +92,7 @@ pub enum ExecutionProvider {
     CoreMl,
 }
 
-/// Model loading configuration for [`Qwen3Tts`].
+/// Model loading configuration for [`Qwen3Tts`] and [`Qwen3TtsClone`].
 ///
 /// All fields default to sensible values: INT4 quantization, CPU inference,
 /// and auto-download from HF Hub.
@@ -147,7 +147,28 @@ impl ModelConfig {
     }
 }
 
-/// Qwen3-TTS backend using ONNX Runtime.
+/// Qwen3-TTS 1.7B VoiceDesign backend using ONNX Runtime.
+///
+/// Generates speech from text using a style instruction to control voice
+/// characteristics (tone, pace, emotion). Implements [`TtsBackend`].
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use wavekat_tts::{TtsBackend, SynthesizeRequest};
+/// use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
+///
+/// let tts = Qwen3Tts::new()?;
+/// let audio = tts.synthesize(
+///     &SynthesizeRequest::new("Hello, world")
+///         .with_instruction("Speak naturally and clearly."),
+/// )?;
+/// audio.write_wav("output.wav")?;
+/// # Ok::<(), wavekat_tts::TtsError>(())
+/// ```
+///
+/// Use [`Qwen3Tts::from_config`] with [`ModelConfig`] to select FP32
+/// precision or a GPU execution provider.
 pub struct Qwen3Tts {
     model: model::Model,
     tokenizer: tokenizer::Tokenizer,
@@ -188,6 +209,16 @@ impl Qwen3Tts {
 ///
 /// Reference audio **must be 24 kHz mono float32 PCM**. If your audio is at
 /// a different sample rate, resample before passing it in.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use wavekat_tts::backends::qwen3_tts::CloneRequest;
+///
+/// let ref_samples: Vec<f32> = vec![]; // 24 kHz mono float32
+/// let req = CloneRequest::new("Hello", &ref_samples, 24000, "ref transcript")
+///     .with_language("en");
+/// ```
 #[derive(Debug, Clone)]
 pub struct CloneRequest<'a> {
     /// Text to synthesize in the cloned voice.
@@ -230,6 +261,28 @@ impl<'a> CloneRequest<'a> {
 ///
 /// Clones a speaker's voice from a short reference clip (3–10 s) and its
 /// transcript, then synthesizes new text in that voice.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use wavekat_tts::AudioFrame;
+/// use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneRequest};
+///
+/// let ref_audio = AudioFrame::from_wav("ref.wav")?;
+/// let tts = Qwen3TtsClone::new()?;
+/// let req = CloneRequest::new(
+///     "Text to say in the cloned voice",
+///     ref_audio.samples(),
+///     24000,
+///     "Transcript of the reference clip.",
+/// );
+/// let audio = tts.synthesize_clone(&req)?;
+/// audio.write_wav("clone_output.wav")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Use [`Qwen3TtsClone::from_config`] with [`ModelConfig`] to select FP32
+/// precision or a GPU execution provider.
 pub struct Qwen3TtsClone {
     model: clone_model::CloneModel,
     tokenizer: tokenizer::Tokenizer,

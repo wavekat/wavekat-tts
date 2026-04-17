@@ -44,9 +44,16 @@ cargo add wavekat-tts --features qwen3-tts
 ```rust
 use wavekat_tts::{TtsBackend, SynthesizeRequest};
 use wavekat_tts::backends::qwen3_tts::Qwen3Tts;
+// use wavekat_tts::backends::qwen3_tts::{ModelConfig, ModelPrecision, ExecutionProvider};
 
 fn main() {
     let tts = Qwen3Tts::new().unwrap(); // auto-downloads INT4 model on first run
+
+    // For FP32 or GPU inference, use from_config:
+    // let config = ModelConfig::default()
+    //     .with_precision(ModelPrecision::Fp32)       // FP32 instead of INT4
+    //     .with_execution_provider(ExecutionProvider::Cuda); // GPU via CUDA
+    // let tts = Qwen3Tts::from_config(config).unwrap();
 
     let request = SynthesizeRequest::new("Hello, world")
         .with_instruction("Speak naturally and clearly.");
@@ -64,10 +71,16 @@ fn main() {
 ```rust
 use wavekat_tts::AudioFrame;
 use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneRequest};
+// use wavekat_tts::backends::qwen3_tts::{ModelConfig, ModelPrecision};
 
 fn main() {
     let ref_audio = AudioFrame::from_wav("ref.wav").unwrap(); // 24 kHz mono WAV
-    let tts = Qwen3TtsClone::new().unwrap(); // auto-downloads 0.6B Base model
+    let tts = Qwen3TtsClone::new().unwrap(); // auto-downloads 0.6B Base INT4 model
+
+    // For FP32 precision:
+    // let config = ModelConfig::default().with_precision(ModelPrecision::Fp32);
+    // let tts = Qwen3TtsClone::from_config(config).unwrap();
+
     let req = CloneRequest::new(
         "Text to say in the cloned voice",
         ref_audio.samples(),
@@ -111,11 +124,14 @@ Generate a WAV file from text (model files are auto-downloaded on first run):
 # VoiceDesign (1.7B)
 cargo run --example synthesize --features qwen3-tts -- "Hello, world\!"
 cargo run --example synthesize --features qwen3-tts -- --instruction "Speak in a warm, friendly tone." "Give every small business the voice of a big one."
+# cargo run --example synthesize --features qwen3-tts -- --precision fp32 "Hello, world\!"
 
 # Voice Clone (0.6B)
 cargo run --example synthesize_clone --features qwen3-tts -- \
   --ref-audio ref.wav --ref-text "Transcript of the reference clip." \
   "Text to synthesize in the cloned voice."
+# cargo run --example synthesize_clone --features qwen3-tts -- --precision fp32 \
+#   --ref-audio ref.wav --ref-text "Transcript." "Text to synthesize."
 ```
 
 ## Performance

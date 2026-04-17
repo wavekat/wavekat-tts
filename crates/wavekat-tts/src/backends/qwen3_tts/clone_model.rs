@@ -64,6 +64,9 @@ const CP_SAMPLER: SamplerConfig = SamplerConfig {
 type TalkerOutput = (Vec<f32>, Array3<f32>, Array5<f32>, Array5<f32>);
 
 /// All ONNX sessions and embedding tables for the 0.6B Base voice clone pipeline.
+///
+/// Chains six ONNX models: tokenizer encoder → speaker encoder → talker
+/// (prefill + decode loop) → code predictor → vocoder.
 pub struct CloneModel {
     talker_prefill: Mutex<Session>,
     talker_decode: Mutex<Session>,
