@@ -52,19 +52,22 @@ fn main() {
         .with_instruction("Speak naturally and clearly.");
     let audio = tts.synthesize(&request).unwrap();
     audio.write_wav("output.wav").unwrap();
+    println!("Wrote output.wav ({:.2}s)", audio.duration_secs());
 }
 ```
 
 ### Voice Clone (reference-audio cloning)
+
+> **Requires a reference WAV file** (`ref.wav`) — a short mono clip of the voice
+> you want to clone, plus a transcript of what is spoken in the clip.
 
 ```rust
 use wavekat_tts::AudioFrame;
 use wavekat_tts::backends::qwen3_tts::{Qwen3TtsClone, CloneRequest};
 
 fn main() {
-    let tts = Qwen3TtsClone::new().unwrap(); // auto-downloads 0.6B Base model
-
     let ref_audio = AudioFrame::from_wav("ref.wav").unwrap(); // 24 kHz mono WAV
+    let tts = Qwen3TtsClone::new().unwrap(); // auto-downloads 0.6B Base model
     let req = CloneRequest::new(
         "Text to say in the cloned voice",
         ref_audio.samples(),
@@ -73,6 +76,7 @@ fn main() {
     ).with_language("en");
     let audio = tts.synthesize_clone(&req).unwrap();
     audio.write_wav("clone_output.wav").unwrap();
+    println!("Wrote clone_output.wav ({:.2}s)", audio.duration_secs());
 }
 ```
 
