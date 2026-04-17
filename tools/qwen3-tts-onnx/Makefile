@@ -139,5 +139,5 @@ clone-fixture: ## Regenerate fixtures/ref_clone.wav via wavekat-tts (1.7B VoiceD
 clone-generate: ## Generate sample voice-clone audio (FP32)
 	$(PYTHON) generate_clone_onnx.py --model-dir $(CLONE_OUTPUT_DIR) \
 		--ref-audio "$(CLONE_REF_AUDIO)" --ref-text "$(CLONE_REF_TEXT)" \
-		--text "Give every small business the voice of a big one." \
+		--text "Your customers deserve a voice they can trust, every time they call." \
 		-o clone_output.wav
