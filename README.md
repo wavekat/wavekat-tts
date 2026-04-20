@@ -95,19 +95,17 @@ fn main() {
 }
 ```
 
-## Quantization
-
-The INT4 models use weight-only RTN quantization via ONNX Runtime's `MatMulNBitsQuantizer`.
-See [ONNX Export & Quantization Guide](docs/QUANTIZATION.md) for how to
-reproduce or customize the process.
-
-## Model cache
-
 Model files are cached by the HF Hub client at `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
 Set `WAVEKAT_MODEL_DIR` to load from a local directory and skip all downloads.
 
 All backends produce `AudioFrame<'static>` from [`wavekat-core`](https://github.com/wavekat/wavekat-core) — the same
 type consumed by `wavekat-vad` and `wavekat-turn`.
+
+## Quantization
+
+The INT4 models use weight-only RTN quantization via ONNX Runtime's `MatMulNBitsQuantizer`.
+See [ONNX Export & Quantization Guide](docs/QUANTIZATION.md) for how to
+reproduce or customize the process.
 
 ## Architecture
 
