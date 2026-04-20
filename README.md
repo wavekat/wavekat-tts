@@ -101,6 +101,8 @@ The INT4 models use weight-only RTN quantization via ONNX Runtime's `MatMulNBits
 See [ONNX Export & Quantization Guide](docs/QUANTIZATION.md) for how to
 reproduce or customize the process.
 
+## Model cache
+
 Model files are cached by the HF Hub client at `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
 Set `WAVEKAT_MODEL_DIR` to load from a local directory and skip all downloads.
 
