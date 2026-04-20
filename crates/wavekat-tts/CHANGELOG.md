@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/wavekat/wavekat-tts/compare/v0.0.3...v0.0.4) - 2026-04-20
+
+### Other
+
+- add quantization guide ([#17](https://github.com/wavekat/wavekat-tts/pull/17))
+
 ## [0.0.3](https://github.com/wavekat/wavekat-tts/compare/v0.0.2...v0.0.3) - 2026-04-17
 
 ### Added
