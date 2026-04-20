@@ -98,7 +98,7 @@ fn main() {
 ## Quantization
 
 The INT4 models use weight-only RTN quantization via ONNX Runtime's `MatMulNBitsQuantizer`.
-See [ONNX Export & Quantization Guide](docs/onnx-export-and-quantization.md) for how to
+See [ONNX Export & Quantization Guide](docs/QUANTIZATION.md) for how to
 reproduce or customize the process.
 
 Model files are cached by the HF Hub client at `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
