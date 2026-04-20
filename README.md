@@ -97,32 +97,9 @@ fn main() {
 
 ## Quantization
 
-The INT4 models use **weight-only RTN (Round-To-Nearest) quantization** via ONNX Runtime's
-[`MatMulNBitsQuantizer`](https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html).
-No calibration dataset is needed — weights are quantized directly from FP32.
-
-Key settings: 4-bit, block size 128, symmetric, accuracy level 4 (int8 input / int32 accumulator).
-The vocoder is kept at FP32 to preserve audio quality.
-
-To reproduce or customize quantization, see [`tools/qwen3-tts-onnx/`](tools/qwen3-tts-onnx/):
-
-```bash
-cd tools/qwen3-tts-onnx
-pip install -r requirements.txt
-
-# 1.7B VoiceDesign: export FP32 ONNX, validate, quantize to INT4
-make all
-
-# 0.6B Base (voice clone): export + quantize
-make clone-all
-```
-
-The quantization script (`quantize_int4.py`) can be run standalone with custom settings:
-
-```bash
-python quantize_int4.py --block-size 64          # smaller blocks = higher quality, larger files
-python quantize_int4.py --include-vocoder         # also quantize the vocoder (may reduce audio quality)
-```
+The INT4 models use weight-only RTN quantization via ONNX Runtime's `MatMulNBitsQuantizer`.
+See [ONNX Export & Quantization Guide](docs/onnx-export-and-quantization.md) for how to
+reproduce or customize the process.
 
 Model files are cached by the HF Hub client at `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
 Set `WAVEKAT_MODEL_DIR` to load from a local directory and skip all downloads.
