@@ -171,6 +171,15 @@ Composable with any backend flag. Selects the inference hardware at build time.
 | `tensorrt` | NVIDIA TensorRT | 🚧 Not configured |
 | `coreml` | Apple CoreML (macOS) | 🚧 Not configured |
 
+## Stars
+
+<a href="https://stars.wavekat.com/wavekat/wavekat-tts">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://stars.wavekat.com/wavekat/wavekat-tts/chart.svg?theme=dark">
+    <img alt="wavekat/wavekat-tts stars" src="https://stars.wavekat.com/wavekat/wavekat-tts/chart.svg?theme=light">
+  </picture>
+</a>
+
 ## License
 
 Licensed under [Apache 2.0](LICENSE).
