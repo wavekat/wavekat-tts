@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/wavekat/wavekat-tts/compare/v0.0.5...v0.0.6) - 2026-11-07
+
+### Added
+
+- add Kokoro-82M backend ([#22](https://github.com/wavekat/wavekat-tts/pull/22))
+
 ## [0.0.5](https://github.com/wavekat/wavekat-tts/compare/v0.0.4...v0.0.5) - 2026-06-04
 
 ### Other
