@@ -23,7 +23,35 @@ Same pattern as
 |---------|-------------|--------|---------|
 | [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) (VoiceDesign 1.7B) | `qwen3-tts` | ✅ Available | Apache 2.0 |
 | [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) (Voice Clone 0.6B) | `qwen3-tts` | ✅ Available | Apache 2.0 |
+| [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (English) | `kokoro` | ✅ Available | Apache 2.0 |
 | [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | 🚧 Planned | Apache 2.0 |
+
+## Kokoro (fast, English)
+
+Kokoro-82M is a small model that runs well on CPU. On an Apple M4, a
+3-second sentence takes about 0.6 s to synthesize (fp16, CPU).
+
+```sh
+cargo add wavekat-tts --features kokoro
+```
+
+```rust
+use wavekat_tts::{TtsBackend, SynthesizeRequest};
+use wavekat_tts::backends::kokoro::Kokoro;
+
+let tts = Kokoro::new()?; // downloads ~165 MB on first use
+let audio = tts.synthesize(&SynthesizeRequest::new("Hello there.").with_voice("am_michael"))?;
+audio.write_wav("hello.wav")?;
+```
+
+Weights come from [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX)
+(pinned revision). Text is turned into phonemes by
+[misaki-rs](https://crates.io/crates/misaki-rs), built without espeak-ng, so
+the backend has no GPL dependency. Words missing from its lexicon are split
+into known words where possible (`wavekat` → "wave cat"), otherwise spelled
+out. 27 English voices (US `a*`, UK `b*`); see `kokoro::voices()`.
+
+Try it: `cargo run --release --example kokoro --features kokoro -- "Hello there."`
 
 ## Model weights
 

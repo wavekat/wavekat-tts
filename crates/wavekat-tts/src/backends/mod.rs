@@ -12,3 +12,6 @@ pub mod qwen3_tts;
 
 #[cfg(feature = "cosyvoice")]
 pub mod cosyvoice;
+
+#[cfg(feature = "kokoro")]
+pub mod kokoro;
