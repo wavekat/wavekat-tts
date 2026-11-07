@@ -1,3 +1,7 @@
 [workspace]
 git_tag_enable = true
 git_release_enable = true
+# 0.0.x: every release is already a breaking bump, so semver checks add
+# nothing. They also can't run while the published v0.0.5 fails to build
+# (its loose `ort` requirement resolves to the incompatible rc.15).
+semver_check = false
