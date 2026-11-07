@@ -1,4 +1,4 @@
-.PHONY: help check ci test test-qwen3 test-all fmt clippy doc bench-rtf bench-rtf-cuda bench-rtf-trt bench-csv bench-csv-cuda bench-csv-trt update-readme
+.PHONY: help check ci test test-qwen3 test-kokoro test-all fmt clippy doc bench-rtf bench-rtf-cuda bench-rtf-trt bench-csv bench-csv-cuda bench-csv-trt update-readme
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -14,6 +14,7 @@ ci: ## Run the full GitHub Actions CI check locally
 	cargo test -p wavekat-tts --no-default-features --features "qwen3-tts"
 	cargo test -p wavekat-tts --no-default-features --features "cosyvoice"
 	cargo test -p wavekat-tts --no-default-features --features "qwen3-tts,cosyvoice"
+	cargo test -p wavekat-tts --no-default-features --features "kokoro"
 
 fmt: ## Check formatting
 	cargo fmt --all -- --check
@@ -30,6 +31,9 @@ test-qwen3: ## Run tests with qwen3-tts feature
 
 test-qwen3-cuda: ## Run tests with qwen3-tts + CUDA
 	cargo test --features "qwen3-tts,cuda"
+
+test-kokoro: ## Run tests with kokoro feature
+	cargo test --features kokoro
 
 test-all: ## Run tests with all features
 	cargo test --all-features
