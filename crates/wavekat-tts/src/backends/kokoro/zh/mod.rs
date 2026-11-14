@@ -23,6 +23,17 @@ pub(crate) fn is_han(c: char) -> bool {
     ('\u{4E00}'..='\u{9FFF}').contains(&c)
 }
 
+/// Any Chinese character, including rare ones the tables don't cover.
+/// These mark text as Chinese and stay in Han runs, so an unknown one is
+/// skipped (as misaki does) rather than handed to the English G2P.
+pub(crate) fn is_cjk(c: char) -> bool {
+    is_han(c)
+        || c == '〇'
+        || ('\u{3400}'..='\u{4DBF}').contains(&c) // Extension A
+        || ('\u{F900}'..='\u{FAFF}').contains(&c) // Compatibility ideographs
+        || ('\u{20000}'..='\u{3134F}').contains(&c) // Extensions B–G
+}
+
 /// Mandarin G2P. Building it loads jieba's dictionary, so create it once
 /// and only when Chinese text shows up.
 pub(super) struct Mandarin {
@@ -38,13 +49,15 @@ pub(super) struct Mandarin {
 
 impl Mandarin {
     pub(super) fn new() -> Self {
-        let chars = CHARS
+        let mut chars: HashMap<char, &'static str> = CHARS
             .lines()
             .filter_map(|l| {
                 let (c, r) = l.split_once('\t')?;
                 Some((c.chars().next()?, r))
             })
             .collect();
+        // Zero, as in 二〇二四年; outside misaki's range but common.
+        chars.insert('〇', "ling2");
         let mut phrases = HashMap::new();
         let mut prefixes = HashSet::new();
         for line in PHRASES.lines() {
@@ -162,7 +175,7 @@ fn runs(text: &str) -> Vec<(bool, &str)> {
     let mut start = 0;
     let mut current: Option<bool> = None;
     for (i, c) in text.char_indices() {
-        let han = is_han(c);
+        let han = is_cjk(c);
         if current.is_some_and(|h| h != han) {
             out.push((current.unwrap(), &text[start..i]));
             start = i;
@@ -202,6 +215,7 @@ mod tests {
         assert!(zh.word("银行").ends_with("xa↗ŋ"));
         // Neutral tone from the phrase table.
         assert_eq!(zh.word("我们"), "wo↓mən");
+        assert!(zh.word("〇").starts_with('l'));
     }
 
     #[test]
@@ -223,6 +237,7 @@ mod tests {
             runs("你好 ok 世界"),
             vec![(true, "你好"), (false, " ok "), (true, "世界")]
         );
+        assert_eq!(runs("二〇二四"), vec![(true, "二〇二四")]);
         assert!(runs("").is_empty());
     }
 }

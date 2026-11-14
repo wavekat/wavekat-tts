@@ -64,18 +64,17 @@ pub enum TextLanguage {
 /// What language `text` is in, as far as Kokoro is concerned.
 ///
 /// Any Chinese character makes it [`TextLanguage::Chinese`]. Letters from a
-/// script Kokoro can't read are an [`TtsError::UnsupportedLanguage`] error
-/// naming the script; digits, punctuation and emoji are ignored.
+/// script Kokoro can't read (Japanese kana, Korean, Cyrillic, Greek, Hebrew,
+/// Arabic, Devanagari, Thai) are an [`TtsError::UnsupportedLanguage`] error
+/// naming the script. Anything else — digits, punctuation, emoji, symbols
+/// such as `µ` — counts as English.
 pub fn detect_language(text: &str) -> Result<TextLanguage, TtsError> {
     let mut chinese = false;
     for c in text.chars() {
-        if is_cjk(c) {
+        if zh::is_cjk(c) {
             chinese = true;
-        } else if c.is_alphabetic() && !is_latin(c) {
-            return Err(TtsError::UnsupportedLanguage(format!(
-                "{} text",
-                script_name(c)
-            )));
+        } else if let Some(script) = unsupported_script(c) {
+            return Err(TtsError::UnsupportedLanguage(format!("{script} text")));
         }
     }
     Ok(if chinese {
@@ -85,23 +84,9 @@ pub fn detect_language(text: &str) -> Result<TextLanguage, TtsError> {
     })
 }
 
-fn is_cjk(c: char) -> bool {
-    zh::is_han(c)
-        || ('\u{3400}'..='\u{4DBF}').contains(&c) // Extension A
-        || ('\u{F900}'..='\u{FAFF}').contains(&c) // Compatibility ideographs
-}
-
-fn is_latin(c: char) -> bool {
-    c.is_ascii_alphabetic()
-        || ('\u{00C0}'..='\u{024F}').contains(&c) // Latin-1 and Extended-A/B
-        || ('\u{1E00}'..='\u{1EFF}').contains(&c) // Latin Extended Additional
-        || ('\u{FF21}'..='\u{FF5A}').contains(&c) // Fullwidth Latin
-        || c == 'ª'
-        || c == 'º'
-}
-
-fn script_name(c: char) -> &'static str {
-    match c as u32 {
+/// The script `c` belongs to, if it's one Kokoro can't read.
+fn unsupported_script(c: char) -> Option<&'static str> {
+    Some(match c as u32 {
         0x3040..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F => "Japanese",
         0x1100..=0x11FF | 0x3130..=0x318F | 0xAC00..=0xD7AF => "Korean",
         0x0400..=0x052F => "Cyrillic",
@@ -110,8 +95,8 @@ fn script_name(c: char) -> &'static str {
         0x0600..=0x06FF | 0x0750..=0x077F => "Arabic",
         0x0900..=0x097F => "Devanagari",
         0x0E00..=0x0E7F => "Thai",
-        _ => "non-Latin",
-    }
+        _ => return None,
+    })
 }
 
 /// Is `voice` one of the Mandarin voices?
@@ -361,7 +346,7 @@ fn accent_for(voice: &str, language: Option<&str>, text: &str) -> Result<Accent,
     let detected = detect_language(text)?;
     let mandarin = is_mandarin_voice(voice);
     if let Some(l) = language {
-        let l = l.to_ascii_lowercase();
+        let l = l.to_ascii_lowercase().replace('_', "-");
         let wants_zh = l == "zh" || l.starts_with("zh-") || l == "cmn";
         if !(l.starts_with("en") || wants_zh) {
             return Err(TtsError::UnsupportedLanguage(l));
@@ -380,7 +365,10 @@ fn accent_for(voice: &str, language: Option<&str>, text: &str) -> Result<Accent,
             "Chinese text with English voice `{voice}` (use a Mandarin voice such as {DEFAULT_ZH_VOICE})"
         )));
     }
-    let british = match language.map(str::to_ascii_lowercase).as_deref() {
+    let british = match language
+        .map(|l| l.to_ascii_lowercase().replace('_', "-"))
+        .as_deref()
+    {
         Some("en-gb") => true,
         Some("en") | None => voice.starts_with('b'),
         Some(_) => false,
@@ -492,6 +480,10 @@ mod tests {
         assert_eq!(detect_language("Café déjà vu").unwrap(), English);
         assert_eq!(detect_language("").unwrap(), English);
         assert_eq!(detect_language("您好，订单 OK 了 🎉").unwrap(), Chinese);
+        // Symbols and other letters outside the blocked scripts are fine.
+        assert_eq!(detect_language("5 µm, Ⅳ, ŋ").unwrap(), English);
+        assert_eq!(detect_language("二〇二四年").unwrap(), Chinese);
+        assert_eq!(detect_language("㐀").unwrap(), Chinese);
         for (text, script) in [
             ("こんにちは", "Japanese"),
             ("漢字とかな", "Japanese"),
@@ -533,6 +525,14 @@ mod tests {
         // A language that doesn't match the voice is refused.
         assert!(accent_for("af_heart", Some("zh"), "Hi").is_err());
         assert!(accent_for("zf_xiaoxiao", Some("en"), "Hi").is_err());
+        assert_eq!(
+            accent_for("zf_xiaoxiao", Some("zh_CN"), "你好").unwrap(),
+            Accent::Mandarin
+        );
+        assert_eq!(
+            accent_for("af_heart", Some("en_GB"), "Hi").unwrap(),
+            Accent::Gb
+        );
         assert!(accent_for("af_heart", Some("fr"), "Salut").is_err());
         // Unreadable scripts are refused for every voice.
         assert!(accent_for("zf_xiaoxiao", None, "こんにちは").is_err());
