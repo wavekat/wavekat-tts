@@ -22,7 +22,9 @@ jobs:
       - run: cargo clippy --workspace -- -D warnings
       - name: Run tests
         run: cargo test --workspace 2>&1 | tee test-output.txt
-      - run: cargo doc --no-deps -p wavekat-tts --all-features
+      # Backends only: --all-features adds cuda/tensorrt, whose ONNX Runtime
+      # download fails on the runner.
+      - run: cargo doc --no-deps -p wavekat-tts --features qwen3-tts,cosyvoice,kokoro
       - name: Job summary
         if: always()
         run: |

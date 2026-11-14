@@ -9,7 +9,7 @@ ci: ## Run the full GitHub Actions CI check locally
 	cargo fmt --all -- --check
 	cargo clippy --workspace -- -D warnings
 	cargo test --workspace
-	cargo doc --no-deps -p wavekat-tts --all-features
+	cargo doc --no-deps -p wavekat-tts --features qwen3-tts,cosyvoice,kokoro
 	cargo test -p wavekat-tts --no-default-features --features ""
 	cargo test -p wavekat-tts --no-default-features --features "qwen3-tts"
 	cargo test -p wavekat-tts --no-default-features --features "cosyvoice"
