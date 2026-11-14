@@ -1,4 +1,4 @@
-//! Kokoro-82M backend (ONNX), English.
+//! Kokoro-82M backend (ONNX), English and Mandarin Chinese.
 //!
 //! A small, fast model: on a laptop CPU it synthesizes many times faster
 //! than real time, which suits short prompts such as phone messages.
@@ -12,9 +12,16 @@
 //! audio.write_wav("hello.wav")?;
 //! ```
 //!
+//! Mandarin uses the `zf_*` / `zm_*` voices. Text in a script the model
+//! can't read (Japanese kana, Korean, Cyrillic, …), or Chinese sent to an
+//! English voice, is an [`TtsError::UnsupportedLanguage`] error that names
+//! the problem. Use [`detect_language`] to pick a voice up front.
+//!
 //! Weights: [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX)
-//! (Apache-2.0). Text is converted to phonemes with
-//! [misaki-rs](https://crates.io/crates/misaki-rs), built without espeak-ng.
+//! (Apache-2.0). English is converted to phonemes with
+//! [misaki-rs](https://crates.io/crates/misaki-rs), built without espeak-ng;
+//! Mandarin with [jieba-rs](https://crates.io/crates/jieba-rs) and bundled
+//! pinyin tables (see the `zh` module).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,15 +38,71 @@ use crate::types::{Gender, SynthesizeRequest, VoiceInfo};
 
 mod download;
 mod phonemize;
+mod zh;
 
 use download::ModelSource;
-use phonemize::{Phonemizer, Vocab};
+use phonemize::{Accent, Phonemizer, Vocab};
 
 /// Output sample rate of every Kokoro voice.
 pub const SAMPLE_RATE: u32 = 24_000;
 
 /// Voice used when the request names none.
 pub const DEFAULT_VOICE: &str = "af_heart";
+
+/// A good default for Chinese text.
+pub const DEFAULT_ZH_VOICE: &str = "zf_xiaoxiao";
+
+/// The language of a piece of text, judged by its script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextLanguage {
+    /// Latin script (and text with no letters at all).
+    English,
+    /// Contains Chinese characters. Latin words mixed in are read as English.
+    Chinese,
+}
+
+/// What language `text` is in, as far as Kokoro is concerned.
+///
+/// Any Chinese character makes it [`TextLanguage::Chinese`]. Letters from a
+/// script Kokoro can't read (Japanese kana, Korean, Cyrillic, Greek, Hebrew,
+/// Arabic, Devanagari, Thai) are an [`TtsError::UnsupportedLanguage`] error
+/// naming the script. Anything else — digits, punctuation, emoji, symbols
+/// such as `µ` — counts as English.
+pub fn detect_language(text: &str) -> Result<TextLanguage, TtsError> {
+    let mut chinese = false;
+    for c in text.chars() {
+        if zh::is_cjk(c) {
+            chinese = true;
+        } else if let Some(script) = unsupported_script(c) {
+            return Err(TtsError::UnsupportedLanguage(format!("{script} text")));
+        }
+    }
+    Ok(if chinese {
+        TextLanguage::Chinese
+    } else {
+        TextLanguage::English
+    })
+}
+
+/// The script `c` belongs to, if it's one Kokoro can't read.
+fn unsupported_script(c: char) -> Option<&'static str> {
+    Some(match c as u32 {
+        0x3040..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F => "Japanese",
+        0x1100..=0x11FF | 0x3130..=0x318F | 0xAC00..=0xD7AF => "Korean",
+        0x0400..=0x052F => "Cyrillic",
+        0x0370..=0x03FF => "Greek",
+        0x0590..=0x05FF => "Hebrew",
+        0x0600..=0x06FF | 0x0750..=0x077F => "Arabic",
+        0x0900..=0x097F => "Devanagari",
+        0x0E00..=0x0E7F => "Thai",
+        _ => return None,
+    })
+}
+
+/// Is `voice` one of the Mandarin voices?
+pub fn is_mandarin_voice(voice: &str) -> bool {
+    voice.starts_with('z')
+}
 
 /// Width of one voice style vector.
 const STYLE_DIM: usize = 256;
@@ -186,7 +249,11 @@ impl Kokoro {
     ///
     /// Call this ahead of time to keep the first synthesis fast.
     pub fn load_voice(&self, voice: &str) -> Result<(), TtsError> {
-        self.voice(voice).map(|_| ())
+        self.voice(voice)?;
+        if is_mandarin_voice(voice) {
+            self.phonemizer.warm_mandarin();
+        }
+        Ok(())
     }
 
     fn voice(&self, voice: &str) -> Result<Arc<Vec<f32>>, TtsError> {
@@ -254,22 +321,13 @@ impl Kokoro {
 impl TtsBackend for Kokoro {
     fn synthesize(&self, request: &SynthesizeRequest) -> Result<AudioFrame<'static>, TtsError> {
         let voice_id = request.voice.unwrap_or(DEFAULT_VOICE);
-        let british = match request.language {
-            Some(l) => {
-                let l = l.to_ascii_lowercase();
-                if !l.starts_with("en") {
-                    return Err(TtsError::UnsupportedLanguage(l));
-                }
-                l == "en-gb" || (l == "en" && voice_id.starts_with('b'))
-            }
-            None => voice_id.starts_with('b'),
-        };
+        let accent = accent_for(voice_id, request.language, request.text)?;
         let table = self.voice(voice_id)?;
         let rows = table.len() / STYLE_DIM;
         let speed = request.speed.unwrap_or(1.0).clamp(0.5, 2.0);
 
         let mut samples = Vec::new();
-        for ids in self.phonemizer.chunks(request.text, british, &self.vocab)? {
+        for ids in self.phonemizer.chunks(request.text, accent, &self.vocab)? {
             // The style vector depends on the utterance length.
             let row = ids.len().min(rows - 1);
             let style = &table[row * STYLE_DIM..(row + 1) * STYLE_DIM];
@@ -283,7 +341,47 @@ impl TtsBackend for Kokoro {
     }
 }
 
-/// English voices: id, display name, gender.
+/// Pick the G2P for a request, refusing text the voice can't read.
+fn accent_for(voice: &str, language: Option<&str>, text: &str) -> Result<Accent, TtsError> {
+    let detected = detect_language(text)?;
+    let mandarin = is_mandarin_voice(voice);
+    if let Some(l) = language {
+        let l = l.to_ascii_lowercase().replace('_', "-");
+        let wants_zh = l == "zh" || l.starts_with("zh-") || l == "cmn";
+        if !(l.starts_with("en") || wants_zh) {
+            return Err(TtsError::UnsupportedLanguage(l));
+        }
+        if wants_zh != mandarin {
+            return Err(TtsError::UnsupportedLanguage(format!(
+                "{l} with voice `{voice}`"
+            )));
+        }
+    }
+    if mandarin {
+        return Ok(Accent::Mandarin);
+    }
+    if detected == TextLanguage::Chinese {
+        return Err(TtsError::UnsupportedLanguage(format!(
+            "Chinese text with English voice `{voice}` (use a Mandarin voice such as {DEFAULT_ZH_VOICE})"
+        )));
+    }
+    let british = match language
+        .map(|l| l.to_ascii_lowercase().replace('_', "-"))
+        .as_deref()
+    {
+        Some("en-gb") => true,
+        Some("en") | None => voice.starts_with('b'),
+        Some(_) => false,
+    };
+    Ok(if british { Accent::Gb } else { Accent::Us })
+}
+
+/// Voices: id, display name, gender. The language comes from the id's
+/// first letter: `a` US English, `b` UK English, `z` Mandarin.
+///
+/// The v1.0 model has two more Mandarin voices, `zf_xiaoni` and
+/// `zm_yunxia`; they are left out because speech recognition misheard
+/// roughly half of what they said with the fp16 export.
 const VOICES: &[(&str, &str, Gender)] = &[
     ("af_heart", "Heart", Gender::Female),
     ("af_alloy", "Alloy", Gender::Female),
@@ -312,19 +410,25 @@ const VOICES: &[(&str, &str, Gender)] = &[
     ("bm_fable", "Fable", Gender::Male),
     ("bm_george", "George", Gender::Male),
     ("bm_lewis", "Lewis", Gender::Male),
+    ("zf_xiaoxiao", "Xiaoxiao", Gender::Female),
+    ("zf_xiaobei", "Xiaobei", Gender::Female),
+    ("zf_xiaoyi", "Xiaoyi", Gender::Female),
+    ("zm_yunxi", "Yunxi", Gender::Male),
+    ("zm_yunyang", "Yunyang", Gender::Male),
+    ("zm_yunjian", "Yunjian", Gender::Male),
 ];
 
-/// All English voices, without loading the model.
+/// All voices, without loading the model.
 pub fn voices() -> Vec<VoiceInfo> {
     VOICES
         .iter()
         .map(|(id, name, gender)| VoiceInfo {
             id: id.to_string(),
             name: name.to_string(),
-            languages: vec![if id.starts_with('b') {
-                "en-GB"
-            } else {
-                "en-US"
+            languages: vec![match id.as_bytes()[0] {
+                b'b' => "en-GB",
+                b'z' => "zh-CN",
+                _ => "en-US",
             }
             .to_string()],
             gender: Some(*gender),
@@ -355,10 +459,83 @@ mod tests {
     use super::*;
 
     #[test]
-    fn voice_list_is_english_and_has_default() {
+    fn voice_list_has_defaults_and_languages() {
         let v = voices();
         assert!(v.iter().any(|v| v.id == DEFAULT_VOICE));
-        assert!(v.iter().all(|v| v.languages[0].starts_with("en-")));
+        assert!(v.iter().any(|v| v.id == DEFAULT_ZH_VOICE));
+        for voice in &v {
+            let want = if is_mandarin_voice(&voice.id) {
+                "zh-"
+            } else {
+                "en-"
+            };
+            assert!(voice.languages[0].starts_with(want), "{}", voice.id);
+        }
+    }
+
+    #[test]
+    fn detects_language_by_script() {
+        use TextLanguage::*;
+        assert_eq!(detect_language("Hello, world 42!").unwrap(), English);
+        assert_eq!(detect_language("Café déjà vu").unwrap(), English);
+        assert_eq!(detect_language("").unwrap(), English);
+        assert_eq!(detect_language("您好，订单 OK 了 🎉").unwrap(), Chinese);
+        // Symbols and other letters outside the blocked scripts are fine.
+        assert_eq!(detect_language("5 µm, Ⅳ, ŋ").unwrap(), English);
+        assert_eq!(detect_language("二〇二四年").unwrap(), Chinese);
+        assert_eq!(detect_language("㐀").unwrap(), Chinese);
+        for (text, script) in [
+            ("こんにちは", "Japanese"),
+            ("漢字とかな", "Japanese"),
+            ("안녕하세요", "Korean"),
+            ("Привет", "Cyrillic"),
+            ("مرحبا", "Arabic"),
+        ] {
+            let err = detect_language(text).unwrap_err().to_string();
+            assert!(err.contains(script), "{text}: {err}");
+        }
+    }
+
+    #[test]
+    fn accent_follows_voice_and_text() {
+        assert_eq!(accent_for("af_heart", None, "Hi").unwrap(), Accent::Us);
+        assert_eq!(accent_for("bf_emma", None, "Hi").unwrap(), Accent::Gb);
+        assert_eq!(
+            accent_for("af_heart", Some("en-gb"), "Hi").unwrap(),
+            Accent::Gb
+        );
+        assert_eq!(
+            accent_for("zf_xiaoxiao", None, "你好").unwrap(),
+            Accent::Mandarin
+        );
+        // A Mandarin voice also reads plain English (with an accent).
+        assert_eq!(
+            accent_for("zm_yunxi", None, "Hi").unwrap(),
+            Accent::Mandarin
+        );
+        assert_eq!(
+            accent_for("zm_yunxi", Some("zh-CN"), "你好").unwrap(),
+            Accent::Mandarin
+        );
+        // Chinese to an English voice is refused, with a hint.
+        let err = accent_for("af_heart", None, "你好")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(DEFAULT_ZH_VOICE), "{err}");
+        // A language that doesn't match the voice is refused.
+        assert!(accent_for("af_heart", Some("zh"), "Hi").is_err());
+        assert!(accent_for("zf_xiaoxiao", Some("en"), "Hi").is_err());
+        assert_eq!(
+            accent_for("zf_xiaoxiao", Some("zh_CN"), "你好").unwrap(),
+            Accent::Mandarin
+        );
+        assert_eq!(
+            accent_for("af_heart", Some("en_GB"), "Hi").unwrap(),
+            Accent::Gb
+        );
+        assert!(accent_for("af_heart", Some("fr"), "Salut").is_err());
+        // Unreadable scripts are refused for every voice.
+        assert!(accent_for("zf_xiaoxiao", None, "こんにちは").is_err());
     }
 
     #[test]
@@ -390,6 +567,19 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(audio.sample_rate(), SAMPLE_RATE);
+        assert!(audio.duration_secs() > 1.0);
+    }
+
+    /// Downloads the model; run with `cargo test --features kokoro -- --ignored`.
+    #[test]
+    #[ignore]
+    fn synthesizes_mandarin() {
+        let tts = Kokoro::new().unwrap();
+        let audio = tts
+            .synthesize(
+                &SynthesizeRequest::new("您好，您的订单已经确认。").with_voice(DEFAULT_ZH_VOICE),
+            )
+            .unwrap();
         assert!(audio.duration_secs() > 1.0);
     }
 }
