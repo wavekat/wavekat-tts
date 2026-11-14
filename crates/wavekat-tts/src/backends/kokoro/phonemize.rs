@@ -1,5 +1,8 @@
 //! Text → Kokoro token ids.
 //!
+//! Mandarin goes through [`super::zh`]; English text inside it, and all other
+//! text, goes through misaki-rs.
+//!
 //! misaki-rs turns English text into Kokoro's phoneme alphabet. It is built
 //! without espeak-ng, so words missing from its lexicon go through
 //! [`SpellFallback`]: split into known pieces where possible, otherwise
@@ -8,10 +11,12 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use misaki_rs::fallback::FallbackError;
 use misaki_rs::{Fallback, Language, Lexicon, G2P};
 
+use super::zh::{self, Mandarin};
 use crate::TtsError;
 
 /// Kokoro's context limit, excluding the two padding tokens.
@@ -51,10 +56,23 @@ impl Vocab {
     }
 }
 
-/// English G2P with a no-espeak fallback.
+/// Which G2P reads the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Accent {
+    /// English, US.
+    Us,
+    /// English, UK.
+    Gb,
+    /// Mandarin, with any English words read as US English.
+    Mandarin,
+}
+
+/// English G2P with a no-espeak fallback, plus Mandarin on demand.
 pub(super) struct Phonemizer {
     us: G2P,
     gb: G2P,
+    /// Built on first Mandarin request (loading jieba takes a moment).
+    zh: OnceLock<Mandarin>,
 }
 
 impl Phonemizer {
@@ -68,7 +86,19 @@ impl Phonemizer {
         Self {
             us: make(Language::EnglishUS),
             gb: make(Language::EnglishGB),
+            zh: OnceLock::new(),
         }
+    }
+
+    /// Load the Mandarin tables now instead of on the first Chinese request.
+    pub(super) fn warm_mandarin(&self) {
+        self.zh.get_or_init(Mandarin::new);
+    }
+
+    fn english(&self, g2p: &G2P, text: &str) -> Result<String, TtsError> {
+        g2p.g2p(text)
+            .map(|(p, _)| p)
+            .map_err(|e| TtsError::Synthesis(format!("phonemize failed: {e}")))
     }
 
     /// Phonemes for `text`, split into chunks that each fit Kokoro's
@@ -76,18 +106,35 @@ impl Phonemizer {
     pub(super) fn chunks(
         &self,
         text: &str,
-        british: bool,
+        accent: Accent,
         vocab: &Vocab,
     ) -> Result<Vec<Vec<i64>>, TtsError> {
-        let g2p = if british { &self.gb } else { &self.us };
         let mut out: Vec<Vec<i64>> = Vec::new();
         let mut current: Vec<i64> = Vec::new();
         let space = vocab.encode(" ");
 
+        // Chinese sentence marks become ". ", "? " etc., so the English
+        // sentence splitter works for both.
+        let mapped;
+        let text = if accent == Accent::Mandarin {
+            mapped = zh::map_punctuation(text);
+            mapped.as_str()
+        } else {
+            text
+        };
+
         for sentence in split_sentences(text) {
-            let (phonemes, _) = g2p
-                .g2p(sentence)
-                .map_err(|e| TtsError::Synthesis(format!("phonemize failed: {e}")))?;
+            let phonemes = match accent {
+                Accent::Us => self.english(&self.us, sentence)?,
+                Accent::Gb => self.english(&self.gb, sentence)?,
+                Accent::Mandarin => {
+                    let zh = self.zh.get_or_init(Mandarin::new);
+                    // A failed English word inside Chinese is skipped, not fatal.
+                    zh.phonemize(sentence, |en| {
+                        self.english(&self.us, en).unwrap_or_default()
+                    })
+                }
+            };
             let ids = vocab.encode(phonemes.trim());
             if ids.is_empty() {
                 continue;

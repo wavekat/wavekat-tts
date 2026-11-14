@@ -23,10 +23,10 @@ Same pattern as
 |---------|-------------|--------|---------|
 | [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) (VoiceDesign 1.7B) | `qwen3-tts` | ✅ Available | Apache 2.0 |
 | [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) (Voice Clone 0.6B) | `qwen3-tts` | ✅ Available | Apache 2.0 |
-| [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (English) | `kokoro` | ✅ Available | Apache 2.0 |
+| [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (English, Mandarin) | `kokoro` | ✅ Available | Apache 2.0 |
 | [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) | `cosyvoice` | 🚧 Planned | Apache 2.0 |
 
-## Kokoro (fast, English)
+## Kokoro (fast, English and Mandarin)
 
 Kokoro-82M is a small model that runs well on CPU. On an Apple M4, a
 3-second sentence takes about 0.6 s to synthesize (fp16, CPU).
@@ -51,7 +51,18 @@ the backend has no GPL dependency. Words missing from its lexicon are split
 into known words where possible (`wavekat` → "wave cat"), otherwise spelled
 out. 27 English voices (US `a*`, UK `b*`); see `kokoro::voices()`.
 
+Mandarin uses the six `zf_*` / `zm_*` voices (`zf_xiaoxiao` is a good
+default). Chinese text is split into words with
+[jieba-rs](https://crates.io/crates/jieba-rs) and read with bundled pinyin
+tables generated from pypinyin (`scripts/gen_kokoro_zh_data.py`), matching
+the phonemes the voices were trained on. English words inside Chinese are
+read as English. Text in a script the model can't read (Japanese kana,
+Korean, Cyrillic, …), or Chinese sent to an English voice, returns
+`TtsError::UnsupportedLanguage` instead of garbled audio;
+`kokoro::detect_language()` lets you pick a voice first.
+
 Try it: `cargo run --release --example kokoro --features kokoro -- "Hello there."`
+or `-- --voice zf_xiaoxiao "您好，您的订单已经确认。"`
 
 ## Model weights
 
