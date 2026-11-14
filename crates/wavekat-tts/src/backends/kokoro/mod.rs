@@ -14,8 +14,8 @@
 //!
 //! Mandarin uses the `zf_*` / `zm_*` voices. Text in a script the model
 //! can't read (Japanese kana, Korean, Cyrillic, …), or Chinese sent to an
-//! English voice, is an [`TtsError::UnsupportedLanguage`] error rather than
-//! garbled audio. Use [`detect_language`] to pick a voice up front.
+//! English voice, is an [`TtsError::UnsupportedLanguage`] error that names
+//! the problem. Use [`detect_language`] to pick a voice up front.
 //!
 //! Weights: [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX)
 //! (Apache-2.0). English is converted to phonemes with

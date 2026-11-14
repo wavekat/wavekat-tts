@@ -58,7 +58,7 @@ tables generated from pypinyin (`scripts/gen_kokoro_zh_data.py`), matching
 the phonemes the voices were trained on. English words inside Chinese are
 read as English. Text in a script the model can't read (Japanese kana,
 Korean, Cyrillic, …), or Chinese sent to an English voice, returns
-`TtsError::UnsupportedLanguage` instead of garbled audio;
+`TtsError::UnsupportedLanguage` naming the problem;
 `kokoro::detect_language()` lets you pick a voice first.
 
 Try it: `cargo run --release --example kokoro --features kokoro -- "Hello there."`
