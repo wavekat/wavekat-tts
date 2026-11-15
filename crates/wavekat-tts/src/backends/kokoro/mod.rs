@@ -160,6 +160,34 @@ pub enum ExecutionProvider {
     CoreMl,
 }
 
+/// Progress of one file being downloaded from HF Hub.
+#[derive(Debug, Clone, Copy)]
+pub struct DownloadProgress<'a> {
+    /// Path inside the model repo, e.g. `onnx/model_fp16.onnx`.
+    pub file: &'a str,
+    /// Bytes received so far.
+    pub downloaded: u64,
+    /// Size of the file in bytes.
+    pub total: u64,
+}
+
+/// Called as model and voice files download. See
+/// [`KokoroConfig::with_download_progress`].
+#[derive(Clone)]
+pub struct DownloadCallback(Arc<dyn Fn(DownloadProgress<'_>) + Send + Sync>);
+
+impl DownloadCallback {
+    fn call(&self, progress: DownloadProgress<'_>) {
+        (self.0)(progress)
+    }
+}
+
+impl std::fmt::Debug for DownloadCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DownloadCallback")
+    }
+}
+
 /// Loading options for [`Kokoro`].
 #[derive(Debug, Clone, Default)]
 pub struct KokoroConfig {
@@ -172,6 +200,8 @@ pub struct KokoroConfig {
     pub model_dir: Option<PathBuf>,
     /// Intra-op threads for ONNX Runtime. `None` = ONNX Runtime's default.
     pub threads: Option<usize>,
+    /// Told about each file downloaded from HF Hub. `None` = silent.
+    pub on_download: Option<DownloadCallback>,
 }
 
 impl KokoroConfig {
@@ -196,6 +226,18 @@ impl KokoroConfig {
     /// Set the number of intra-op threads.
     pub fn with_threads(mut self, threads: usize) -> Self {
         self.threads = Some(threads);
+        self
+    }
+
+    /// Call `f` as files download from HF Hub: once with `downloaded == 0`
+    /// when a file starts, as bytes arrive, and with `downloaded == total`
+    /// when it finishes. Files already cached are not reported. Voices
+    /// download later, on first use, and are reported too.
+    pub fn with_download_progress(
+        mut self,
+        f: impl Fn(DownloadProgress<'_>) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_download = Some(DownloadCallback(Arc::new(f)));
         self
     }
 }
